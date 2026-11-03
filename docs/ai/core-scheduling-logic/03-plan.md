@@ -61,7 +61,7 @@ The single public `ScheduleService` facade exposes `get_schedule`, `rename_sched
 
 ## 3. Small, ordered implementation steps
 
-Each numbered step is one reviewable deliverable, targeted at **under about 200 changed lines**, including tests. If the real diff grows, split that step at a testable boundary. For each step, write a behavioral test that fails for the missing behavior, implement only enough to pass, and inspect the diff before continuing. The verification column in Section 4 names the focused gate; every step also runs the full required checks after its focused tests pass.
+Each numbered step is one reviewable deliverable, targeted at **under about 200 changed lines**, including tests. If the real diff grows, split that step at a testable boundary. For each step, use a behavioral test that fails for the missing behavior, implement only enough to pass, and inspect the diff before continuing. The Stage 4 tests are already written and include cases for later steps; do not modify them during implementation. Run the tests relevant to the current step before proceeding. Run the full repository gate after the implementation steps, in Step 18.
 
 1. **Typed state and strict bounds.** Add frozen or otherwise value-oriented records for `Employee`, `ShiftDefinition`, `DemandCell`, `Assignment`, `Violation`, `ScheduleState`, and a coded boundary error. Define day indices `0..6`, integer ceiling, and strict numeric validators that reject `bool`, floats, strings, negatives where forbidden, and overflow. Test accepted `0`/ceiling and rejected ceiling+1, NaN, infinity, and invalid IDs. Keep `Schedule` compatible.
 2a. **Additive schema migration.** Extend `schedules` with threshold, daily limit, and version; create scoped child tables, indexes, checks, and composite ownership FKs. Migrate a legacy `schedules(id,name)` database transactionally and idempotently while preserving IDs/names. Test repeat migration, FK enforcement, and old rows after reopen.
@@ -88,7 +88,7 @@ Each numbered step is one reviewable deliverable, targeted at **under about 200 
 
 ## 4. Verification for each step
 
-Use the Python environment installed from `requirements.txt`. For **every** numbered step after its focused test, run `python -m pytest`, `python -m ruff check .`, `python -m ruff format --check .`, and `python -m compileall -q src ui tests main.py`; a step is not complete while an applicable gate fails. A normal passing command exits `0`, with pytest reporting all tests passed. Local benchmark runs record timings and machine details for review; they have no hard elapsed-time assertion in CI. Tests for rejected writes must compare a fresh database read before and after, including history where applicable. The focused checks are:
+Use the Python environment installed from `requirements.txt`. Between implementation steps, run the relevant focused tests from the files listed below and require those selected tests to pass. The file-wide commands in the table identify target files; where a file also contains tests for later steps, use pytest node IDs or `-k` to select only current-step cases. A file-wide run becomes a gate once all behaviors tested in that file exist. Run `python -m ruff check .`, `python -m ruff format --check .`, and `python -m compileall -q src ui tests main.py` after each implementation step. In Step 18, after implementation is complete, run the **full** `python -m pytest` suite and repeat all three other repository checks; all must pass before the implementation is complete. Local benchmark runs record timings and machine details for review; they have no hard elapsed-time assertion in CI. Tests for rejected writes must compare a fresh database read before and after, including history where applicable. The focused checks are:
 
 | Step | Focused test / check and expected observation |
 |---|---|
@@ -113,7 +113,7 @@ Use the Python environment installed from `requirements.txt`. For **every** numb
 | 16a | `python -m pytest tests/test_refresh.py -q`: snapshot JSON round-trip, immutable read, and schedule isolation pass. |
 | 16b | `python -m pytest tests/test_refresh.py -q`: exactly one prior-state snapshot and one replacement commit together; stale/altered/cancelled confirmation and injected failure leave neither change. |
 | 17 | `python -m pytest tests/test_schedule_service.py tests/test_scheduling_service.py tests/test_csv_import.py tests/test_metrics.py tests/test_generation.py tests/test_refresh.py -q` passes AC-01–AC-19; run `python -m pytest tests/test_performance.py -q -s` locally and record all three scenario timings separately. |
-| 18 | Full required gate above; `git diff --check` and `git status --short` show no whitespace error or unrelated changes. |
+| 18 | Full `python -m pytest`, Ruff lint, Ruff format check, and `compileall` pass; `git diff --check` and `git status --short` show no whitespace error or unrelated changes. |
 
 ## 5. Spec traceability
 
