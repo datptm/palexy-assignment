@@ -12,6 +12,7 @@
 > - **[DECISION]** is a proposed product rule adopted by this BRD to resolve ambiguity and make behavior testable. It is not a claim about the assignment's original wording.
 > - **[OPTIONAL]** is a desirable enhancement, not required for the baseline.
 > - **MUST / SHOULD / MAY** indicate normative priority within this BRD. A **[DECISION] MUST** is binding for implementation of this proposed baseline, but remains changeable by the product owner.
+> - **[P0] / [P1] / [P2]** mark the implementation priority of the acceptance scenarios in Section 9.2: **P0** = core correctness, implement and automate first; **P1** = valuable, implement next; **P2** = verify manually or defer.
 >
 > If a proposed decision conflicts with an explicit source requirement, the source requirement prevails. Do not silently implement unspecified behavior: add it to the decision log.
 
@@ -27,9 +28,9 @@ The application helps a retail or food-service store manager build a practical w
 
 1. Turn transaction history into a clear, defensible indication of required hourly staffing.
 2. Propose a weekly roster using predefined shifts and available employee capacity.
-3. Never violate weekly maximum hours or assign one employee overlapping shifts during automatic generation.
+3. Never violate weekly maximum hours, the daily shift limit, or the overlap and duplicate rules during automatic generation, and never allow overlapping or duplicate assignments in any saved roster.
 4. Seek useful and proportionate work allocation, without sacrificing critical demand coverage simply to equalize hours.
-5. Let non-technical managers adjust the roster quickly, with accurate, immediate feedback.
+5. Let non-technical managers adjust the roster quickly, with accurate, immediate feedback: impossible assignments are blocked with a reason, and breaches of policy limits are accepted with a clear warning.
 6. Expose shortages, excess staffing, assumptions, and the limits of the proposed schedule.
 
 ### 1.2 Success criteria
@@ -69,8 +70,12 @@ There are no separate employee, administrator, or auditor journeys in the baseli
 | Hourly coverage | Number of employees working during a given hourly interval, or their equivalent staff-hours for that interval. |
 | Understaffing | Required staff exceeds scheduled coverage for an interval. |
 | Overstaffing | Scheduled coverage exceeds modeled requirement for an interval. |
-| Utilization | Assigned weekly hours divided by that employee's weekly maximum, when the maximum is positive. |
+| Utilization | Assigned weekly hours divided by that employee's weekly maximum, when the maximum is positive. It can exceed 100% only through a manual edit, which is flagged with a warning. |
 | Draft | Manager-editable proposal; no publication/approval workflow is included. |
+| Daily shift limit | Maximum number of shifts one employee may work on a single day (default 1, configurable per schedule). A policy limit, not a legal rule. |
+| Hard rule (blocking error) | A condition that makes an assignment or definition impossible or contradictory: nonexistent reference, duplicate assignment, same-person overlap, invalid shift range, duplicate shift definition. The action is rejected with an explanation. |
+| Policy limit (warning) | A configurable business limit (weekly maximum hours, daily shift limit) that the manager may knowingly exceed by manual edit. The action is accepted and the breach is shown prominently. Automatic generation never breaches policy limits. |
+| Violation | A rule breach reported by validation, carrying a code, a severity (error or warning), a readable message, and numeric details. |
 
 ### 2.3 Temporal boundaries [DECISION]
 
@@ -87,13 +92,13 @@ There are no separate employee, administrator, or auditor journeys in the baseli
 
 ## 3. Core End-to-End User Journey
 
-1. **Create:** The manager creates and names a schedule. It begins with two default shift definitions, no employees, no imported demand, and an empty roster.
+1. **Create:** The manager creates and names a schedule. It begins with two default shift definitions, no employees, no imported demand, an empty roster, and default settings (staffing threshold N = 20, daily shift limit = 1).
 2. **Configure staff:** Add employees and weekly maximum hours; edit or remove them as needed.
 3. **Import demand:** Upload a weekly transaction report. See validation results and an intelligible demand preview.
 4. **Review shifts:** Keep defaults or create/edit/remove allowed shift definitions.
 5. **Generate:** Trigger Auto-schedule. The application checks prerequisites, estimates required staffing, and produces a best-effort draft plus diagnostics.
 6. **Inspect:** See which people work each day and shift, each person's assigned hours, and how coverage compares with demand.
-7. **Adjust:** Assign, remove, or reassign employees directly in the roster. Changes update the metrics and warnings immediately.
+7. **Adjust:** Assign, remove, or reassign employees directly in the roster. Changes update the metrics and warnings immediately; impossible assignments are blocked with a reason, and policy-limit breaches are accepted with a visible warning.
 8. **Review outcome:** Check shortages, excess coverage, fairness/utilization, and the distinction between overall and average transactions per staff-hour.
 9. **Regenerate if desired:** With an existing draft, confirm before replacing assignments; no silent loss of manual edits.
 
@@ -107,7 +112,7 @@ There are no separate employee, administrator, or auditor journeys in the baseli
 
 **[SOURCE]** A manager can create a schedule containing staff, transaction data, shifts, and the generated roster.
 
-**[DECISION]** A newly created schedule is empty except for default shifts; schedule names are editable and do not need to be unique. Multiple schedules may exist independently. The application must make the currently selected schedule clear. Changes to one schedule do not change another.
+**[DECISION]** A newly created schedule is empty except for default shifts and default settings (staffing threshold N = 20, daily shift limit = 1); schedule names are editable and do not need to be unique. Multiple schedules may exist independently. The application must make the currently selected schedule clear. Changes to one schedule do not change another.
 
 **Acceptance criteria**
 - Given no schedules, the manager can create one without importing data first.
@@ -121,15 +126,16 @@ There are no separate employee, administrator, or auditor journeys in the baseli
 
 **[DECISION]**
 - Names must not be blank after whitespace trimming; duplicate display names are allowed but each employee must be individually distinguishable in selection and editing (e.g., disambiguating suffix in the UI).
-- Maximum hours must be a finite, nonnegative number. For the baseline's whole-hour shifts, accept whole hours only; a value of zero is valid and means no assignments are possible.
-- Editing a maximum does not silently delete existing assignments. If the new maximum is below already assigned hours, the change is rejected with a clear explanation and a path to remove or move assignments first. This preserves the invariant that saved rosters never exceed employee maximums.
+- Maximum hours must be a finite, nonnegative number. For the baseline's whole-hour shifts, accept whole hours only; a value of zero is valid and means no automatic assignments are possible.
+- Editing a maximum does not silently delete existing assignments. If the new maximum is below already assigned hours, the change is **accepted**, all assignments are kept, and the employee is flagged with an over-maximum warning showing the excess (for example 40 / 32 h, +8 h over). The manager resolves it by removing or moving assignments, or by restoring the maximum.
 - Removing an employee who is assigned prompts for confirmation, shows how many assignments will be removed, and updates coverage; removal never leaves dangling assignments.
 
 **Acceptance criteria**
-- Employee capacity is visible next to assigned hours, e.g., **24 / 32 h**.
-- A person whose weekly maximum is below the shortest available shift remains in the staff list but cannot receive a qualifying assignment.
+- Employee capacity is visible next to assigned hours, e.g., **24 / 32 h**; an employee over the maximum is shown as, e.g., **40 / 32 h (+8 h over)**.
+- A person whose weekly maximum is below the shortest available shift remains in the staff list and is never auto-assigned; a manual assignment is allowed only with an over-maximum warning.
 - Duplicate-name employees can be distinguished when assigning shifts.
 - Editing or removing staff cannot make summary totals stale.
+- Lowering a maximum below assigned hours is accepted, keeps all assignments, and immediately shows the over-maximum warning with the excess hours.
 
 ### BR-03 — Import historical transaction data
 
@@ -138,12 +144,19 @@ There are no separate employee, administrator, or auditor journeys in the baseli
 **[DECISION]**
 - Accept all seven weekday columns in any order, using recognizable full or abbreviated English day names (case-insensitive). A date range or extra file title is metadata, not the day order.
 - Accept common whole-hour labels such as `7am`, `7 AM`, `07:00`, `1pm`, `22:00`.
-- Each of the **112 expected weekday/hour combinations** must appear exactly once after normalization; missing or duplicate days/hours are validation errors.
-- Transaction counts must be finite, nonnegative integers; zero is valid. Negative, blank, nonnumeric, and fractional counts are invalid.
-- Reject unexpected time buckets rather than silently discarding them. Report actionable errors indicating row/column or day/hour when possible.
+- Every finding is classified as an **error** (the file is rejected) or a **warning** (the file may still be imported, and the manager is told what was ignored).
+- **Errors:**
+  - A weekday/hour combination is missing, or appears more than once, after normalization. All **112** expected combinations must appear exactly once.
+  - A transaction count is blank, negative, fractional, nonnumeric, or not finite. Zero is valid.
+  - A row or column label is not recognizable as a supported weekday, a supported hour (07:00 through 22:00 start times), or an ignorable summary or metadata line (see warnings). This includes hour buckets outside the operating window.
+- **Warnings (content ignored, import allowed):**
+  - Summary rows or columns labelled such as *Total*, *Sum*, *Grand total*, or *All*; their values are never used as demand.
+  - Title or metadata lines above the header, date ranges, and entirely empty rows or columns.
+  - Every ignored item is listed with its position so the manager can see what was disregarded.
+- Report **all** errors and warnings together, with row/column or day/hour where possible, rather than stopping at the first problem.
 - Validate the entire file before replacing demand. On any error, leave the previously imported data and roster unchanged.
 - Successful re-import replaces the prior demand data **without changing assignments**. Recalculate required coverage, reporting, and shortage warnings; clearly explain that the roster now reflects an earlier draft against new demand. The manager can choose to regenerate afterward.
-- A demand preview and import success/error state are visible. Do not interpret missing input as zero transactions.
+- A demand preview and the import success/error state, including warnings, are visible before and after import. Do not interpret missing input as zero transactions.
 
 **Acceptance criteria**
 - The supplied CSV format imports successfully even though its first day is Friday.
@@ -151,6 +164,9 @@ There are no separate employee, administrator, or auditor journeys in the baseli
 - A zero transaction count is not mistaken for a missing value.
 - An invalid file never partially overwrites valid data.
 - Changing demand refreshes coverage alerts without automatically rewriting assignments.
+- A file containing a Total row and/or Total column imports successfully; the ignored lines are listed as warnings and are not counted as demand.
+- A blank cell is reported as an error naming the day and hour, and no stored data changes.
+- All problems found in a malformed file are listed together in a single report.
 
 ### BR-04 — Manage shift definitions
 
@@ -162,15 +178,18 @@ There are no separate employee, administrator, or auditor journeys in the baseli
 - Valid shift: start before end, whole-hour times, within operating hours, nonzero duration.
 - Different shift definitions **may overlap**. This enables shorter peak-hour shifts; however, an individual cannot work overlapping shifts on the same day.
 - Exact duplicate start/end shift definitions are rejected to avoid confusing identical choices.
-- Editing a shift already used in assignments requires a preview of impact. The change is allowed only if all existing affected assignments remain within weekly maximums and do not overlap; otherwise the manager must resolve assignments first.
+- Editing a shift already used in assignments shows a preview of impact (affected days, people, and hour changes). The change is rejected, with the affected assignments identified, only if it would make an employee overlap with another of their shifts on some day. Consequences for weekly maximum hours or the daily shift limit do not block the edit; they are reported as warnings immediately after it.
 - Deleting a used shift requires confirmation and removes associated assignments across all days. Coverage and hours update immediately.
 - A schedule with no shifts remains editable, but generation is disabled with a clear message.
+- The **daily shift limit** (default 1, a positive whole number, set per schedule) caps how many shifts one employee works on one day. Back-to-back shifts such as 07:00–15:00 and 15:00–23:00 do not overlap but count as two shifts toward this limit.
 
 **Acceptance criteria**
 - A 10:00–14:00 peak shift can coexist with both defaults.
 - Assigning a person to 07:00–15:00 and 10:00–14:00 on the same day is rejected as overlapping.
 - 07:00–15:00 and 15:00–23:00 do not overlap at the boundary.
 - Removing a used shift does not leave unexplainable phantom staff-hours.
+- Editing a used shift so that an employee's weekly hours exceed their maximum is accepted and shows an over-maximum warning; editing it so that it overlaps another of that employee's shifts is rejected and nothing changes.
+- With the default limit of 1, a manual attempt to give one person both 07:00–15:00 and 15:00–23:00 on the same day is accepted with a daily-limit warning; automatic generation never does this.
 
 ### BR-05 — Estimate required staffing from transactions
 
@@ -210,20 +229,22 @@ $$
 **[SOURCE]** Auto-schedule assigns staff to available shifts across the week, concentrates coverage on busier periods, respects each person's weekly maximum, aims for fair and useful allocation, and returns a visible editable draft. Insufficient capacity must be handled gracefully.
 
 **[DECISION: optimization policy]**
-1. **Hard feasibility first:** An automatically assigned employee must exist, each shift must exist, weekly maximums must not be exceeded, and the employee must not be on overlapping shifts on the same day.
-2. **Primary goal — minimize uncovered staffing need:** Prefer assignments that reduce unmet required staff-hours. Giving an additional employee to an already sufficiently staffed hour has no shortage-reduction value for that hour.
-3. **Secondary goal — avoid excess staffing:** Among rosters with equal or comparable unmet need, prefer fewer unnecessary staff-hours. Unused capacity is acceptable.
-4. **Tertiary goal — distribute useful work fairly:** Among rosters with comparable coverage and excess, prefer allocations that reduce differences in normalized utilization across employees who can work at least one available shift.
+1. **Hard feasibility first:** An automatically assigned employee must exist, each shift must exist, the same employee/day/shift must not be assigned twice, weekly maximums must not be exceeded, the daily shift limit must not be exceeded, and the employee must not be on overlapping shifts on the same day.
+2. **Primary goal — reduce uncovered staffing need:** Repeatedly choose the day and shift whose next additional employee has the highest *net benefit* (Section 5.3). The benefit is the reduction in unmet required staff-hours across **the whole shift**, not merely its busiest hour. Adding an employee to an already sufficiently staffed hour has no shortage-reduction value for that hour.
+3. **Secondary goal — avoid excess staffing:** Each candidate is charged for the excess staff-hours it would create. An additional employee is added only while the net benefit is greater than zero (the **stop rule**). Unused capacity is acceptable.
+4. **Tertiary goal — distribute useful work fairly:** For the chosen day and shift, assign the eligible employee with the lowest utilization; ties go to the fixed staff order. A balancing pass MAY swap assignees between equivalent slots to narrow utilization differences without changing coverage or excess.
 5. **Consistent tie-breaking:** Identical inputs, rules, and staff/shift ordering must produce reproducible results. Do not imply random choice is a fairness guarantee.
 6. **Best effort:** If full coverage is not achievable, still produce the best valid draft available and expose unmet demand.
 
-The policy is **lexicographic in intent**: hard constraints must always hold; coverage takes precedence over avoiding excess, which takes precedence over marginal fairness improvements. This resolves otherwise ambiguous trade-offs without pretending every goal can be maximized simultaneously.
+The policy is **coverage-dominant**: hard constraints always hold; because an unmet staff-hour is weighted more heavily than an excess staff-hour, coverage takes precedence over avoiding excess, which takes precedence over fairness. Coverage is not bought at any price, however: an employee who removes little shortage while creating much excess is not added. With a sufficiently large shortage weight the behavior approaches a strict “coverage first, then excess” order.
 
 #### 6.1 Why shift-level decisions matter
 
 Transactions vary hour by hour, but an assignment commits an employee to an entire shift. With only two non-overlapping 8-hour defaults, staffing within each shift is constant; a noon peak may cause excess morning staffing if the whole 8-hour block is covered to peak level.
 
 **Example (illustrative, not imported data):** A morning shift has hourly required staff `[1, 2, 2, 3, 4, 4, 3, 2]`, totaling 21 required staff-hours. Four people across the full shift provide 32 staff-hours, whereas three provide 24 but leave shortages in two peak hours. Adding a 10:00–14:00 short shift could provide more targeted peak coverage. The scheduler must honor the **actual shifts configured**, not silently invent new ones.
+
+**Worked example of the stop rule (default weights W_under = 3, W_over = 1):** For the same hourly need, the net benefit of each additional full-shift employee is `3 × shortage-hours removed − 1 × excess-hours added`: first employee 3×8 − 0 = 24; second 3×7 − 1 = 20; third 3×4 − 4 = 8; fourth 3×2 − 6 = 0. The fourth is not added because the net benefit must be greater than zero, so the draft keeps three employees (2 unmet and 5 excess staff-hours). With W_under = 4 the fourth employee would be added (4×2 − 6 = 2).
 
 #### 6.2 Coverage versus fairness example
 
@@ -237,14 +258,15 @@ Generation ends with a valid, possibly partial roster. It must not manufacture a
 
 #### 6.4 Required generation feedback
 
-Provide: roster; total required staff-hours; scheduled staff-hours; covered staff-hours; unmet staff-hours; coverage percentage; employee allocated/max hours; hourly shortage warnings; and an understandable indication that a result is a *draft*. Describe the adopted demand threshold and fairness approach in accessible language.
+Provide: roster; total required staff-hours; scheduled staff-hours; covered staff-hours; unmet staff-hours; coverage percentage; employee allocated/max hours; hourly shortage warnings; and an understandable indication that a result is a *draft*. Describe the adopted demand threshold, the staffing trade-off (stop) rule, and the fairness approach in accessible language.
 
 **Acceptance criteria**
 - High-demand hours receive more coverage **where the configured shifts and available capacity make this possible**; do not promise a strict monotonic relationship at every hour.
-- No auto-generated employee exceeds a weekly maximum or works overlapping shifts.
+- No auto-generated employee exceeds a weekly maximum, exceeds the daily shift limit, or works overlapping shifts.
 - The same valid inputs produce the same roster and metrics.
 - An empty or insufficient-capacity scenario yields actionable feedback rather than a crash or unexplained rejection.
 - A partial roster can be edited after generation.
+- An additional employee is not added when the shortage removed is outweighed by the excess staffing created (stop rule, Section 5.3).
 
 ### BR-07 — View the weekly roster
 
@@ -270,8 +292,8 @@ Provide: roster; total required staff-hours; scheduled staff-hours; covered staf
 **[DECISION]**
 - Clicking a day/shift cell opens an inline picker, popover, or similarly direct control with current assignees and eligible employees.
 - Add an assignment, remove one, or reassign from person A to person B with minimal steps. Reassignment is treated as one deliberate action when possible, not a multi-screen workflow.
-- **Manual assignments use the same hard rules as automatic generation:** weekly maximums cannot be exceeded and a person cannot work overlapping shifts. Invalid edits are rejected with specific reasons; the prior state remains intact.
-- Understaffing and overstaffing are **warnings**, not blockers. A manager can retain a partial roster.
+- Manual edits are checked by the validation model below. **Blocking errors** (nonexistent reference, duplicate assignment, same-person overlap) reject the edit with a specific reason and leave the prior state intact. **Warnings** (weekly maximum exceeded, daily shift limit exceeded) accept the edit and show a prominent explanation. Automatic generation never produces either kind of violation.
+- Understaffing, overstaffing, and policy-limit breaches are **warnings**, not blockers. A manager can retain a partial roster or a deliberate over-limit roster.
 - A rejected edit never silently alters some other day or person's assignments.
 - Successful edits immediately refresh employee hours, hourly coverage, weekly totals, ratios, and warnings.
 - Managers may explicitly leave employees with zero scheduled hours if demand/capacity does not justify work; this should be visible, not treated as a hard violation.
@@ -279,8 +301,34 @@ Provide: roster; total required staff-hours; scheduled staff-hours; covered staf
 **Acceptance criteria**
 - Removing a person from a 07:00–15:00 shift changes coverage for exactly the applicable hours and decreases the person's weekly hours by eight.
 - Attempting to add an overlapping shift gives a clear reason and preserves existing assignments.
-- Attempting to exceed maximum hours explains the employee's current allocation, requested shift duration, and limit.
+- Assigning a person beyond their maximum hours is accepted and explains the employee's current allocation, the requested shift duration, the resulting total, and the limit (for example “32 h + 8 h = 40 h, limit 32 h”).
 - No page reload is required to see updated metrics.
+- Reassigning from person A to person B is validated as one operation against the resulting state; it is not rejected because of an intermediate state.
+- A warning-bearing edit stays visible: the over-limit state is shown on the employee and in the warning list until it is resolved.
+
+#### Validation model and severity policy
+
+Every proposed change is evaluated by one validation model that reports **violations**. Each violation carries a code, a severity, a readable message, and numeric details. A change is applied if and only if it has no violation of severity **error**; warnings are applied and displayed.
+
+| Code | Condition | Severity on manual edit or definition change | Automatic generation |
+|---|---|---|---|
+| UNKNOWN_REFERENCE | Assignment refers to a nonexistent employee, shift, or day | Error | Never produced |
+| DUPLICATE_ASSIGNMENT | Same employee, day, and shift already assigned | Error | Never produced |
+| SHIFT_OVERLAP | Same employee on two overlapping shifts on one day | Error | Never produced |
+| INVALID_SHIFT_RANGE | Shift is not whole-hour, start is not before end, or it falls outside 07:00–23:00 | Error | Not applicable |
+| DUPLICATE_SHIFT_DEFINITION | Another shift has the identical start and end | Error | Not applicable |
+| OVER_WEEKLY_MAX | Employee's weekly hours would exceed their maximum | Warning | Treated as a hard constraint |
+| OVER_DAILY_SHIFT_LIMIT | Employee would work more shifts in a day than the daily limit | Warning | Treated as a hard constraint |
+| UNDERSTAFFED / OVERSTAFFED | Coverage below / above required for an hour | Warning (diagnostic) | Reported as an outcome |
+| LOW_UTILIZATION | Employee's utilization is notably low | Informational (fairness signal, not an error) | Reported as an outcome |
+
+**Design guidance [OPTIONAL, implementation-neutral]:**
+
+- Implement validation as one pure function of the current schedule and the proposed change, returning a list of violations, for example `validate_assignment(schedule, employee, shift, day) → list of Violation(code, severity, message, details)`.
+- Keep the severity of each code in a single policy table. Making a rule stricter (for example turning OVER_WEEKLY_MAX into an error) is then a one-place change, and call sites never hard-code severities.
+- Reuse the same function for manual assignments, reassignments, shift edits (evaluated across every affected assignment), and employee-maximum edits; the generator applies the same rules as constraints.
+- Validate before writing, then apply the change atomically, so a rejected edit changes nothing.
+- Derive the current warning list from stored assignments each time rather than storing warnings, so warnings cannot go stale; edit-time results use the same rules plus before/after numbers.
 
 ### BR-09 — Regenerate safely
 
@@ -337,7 +385,7 @@ $$
 - If total staff-hours = 0, overall ratio is **“–”**. If no cells have staff, arithmetic average is **“–”**.
 - Zero-staff buckets remain included in weekly total transactions, even though their individual ratio is undefined and excluded from the arithmetic average.
 - Coverage rate denominator is always positive under the open-hour minimum rule. The rate is capped at 100%: extra employees cannot artificially inflate coverage.
-- Staff utilization is calculated only for employees with positive maximum hours. A zero-maximum employee's utilization is **“N/A”**, not an infinity or a zero/zero percentage.
+- Staff utilization is calculated only for employees with positive maximum hours. A zero-maximum employee's utilization is **“N/A”**, not an infinity or a zero/zero percentage. Utilization above 100% (possible only through manual edits) is shown as calculated, for example 125%, together with its over-maximum warning.
 - Keep weekly and, where practical, per-day totals. The source specifically requires the weekly totals and the day/hour grid.
 
 #### 10.2 Arithmetic acceptance example [SOURCE]
@@ -358,6 +406,7 @@ Arithmetic average of the three per-cell ratios is **14.5**, not 14.25. The inte
 - Show numerical differences, for example: “Tuesday 18:00–19:00: required 3, assigned 2, short 1.”
 - If there are many adjacent shortage buckets, grouping a warning by contiguous time range is acceptable as long as individual hour details remain accessible.
 - Do not present transactions per staff-hour as a proven measure of employee performance or service quality; its meaning is descriptive.
+- Show policy-limit warnings with numbers, for example: “An: 40 / 32 h — 8 h over weekly maximum” and “Sam, Tuesday: 2 shifts, daily limit 1.”
 
 ---
 
@@ -375,7 +424,7 @@ Arithmetic average of the three per-cell ratios is **14.5**, not 14.25. The inte
 |---|---|---|---|---|
 | Peak staffing per shift | Set headcount to the maximum hourly need within that shift. | Simple, protects peaks where capacity allows. | Excess staffing in quieter hours; may consume capacity needed elsewhere. | Useful transparent baseline, not sufficient alone for assignment decisions. |
 | Average staffing per shift | Set headcount to rounded average hourly demand. | Efficient on hours. | Can deliberately miss important peak periods. | Not recommended as sole rule. |
-| Hourly-first priority, then shift assignment | Rank shortages or high-value shift coverage, allocate eligible staff, then balance hours. | Demand-aware and practical under constraints. | Local decisions can be suboptimal. | **Recommended baseline.** |
+| Marginal-gain allocation with a cost-based stop rule, then shift assignment | Repeatedly add the employee whose assignment has the best net benefit (shortage removed minus weighted excess created) across the whole shift; stop when none is positive; then balance hours. | Demand-aware, avoids needless excess, explainable, practical under constraints. | Local decisions can be suboptimal. | **Recommended baseline.** |
 | Global constrained optimization | Evaluate assignments jointly under a stated priority policy. | Better consistency for interacting constraints and complex shifts. | More effort to formulate, validate, and explain. | Suitable future refinement, not necessary to meet baseline. |
 
 **The BRD specifies business outcomes and priorities, not a mandated optimization technique.** An implementation may use a heuristic or a formal optimizer, but must satisfy the invariants and evaluation scenarios below.
@@ -384,7 +433,7 @@ Arithmetic average of the three per-cell ratios is **14.5**, not 14.25. The inte
 
 If capacity cannot cover all hours, the scheduler should prioritize the assignment providing the greatest reduction in unmet required staff-hours across its entire shift. Do not merely rank a shift by its single busiest bucket or by raw transaction volume while ignoring already scheduled coverage.
 
-When two alternatives reduce shortages equally, prefer lower excess staffing, then fairer allocation. For exact ties, use a reproducible convention.
+Each candidate assignment is scored by its **net benefit**: `net benefit = W_under × (unmet staff-hours removed across the shift) − W_over × (excess staff-hours added across the shift)`. The baseline policy constants are **W_under = 3** and **W_over = 1**; W_under must exceed W_over so that coverage dominates. The scheduler selects the candidate with the highest net benefit and stops when no candidate's net benefit is greater than zero (the **stop rule**), leaving remaining capacity unused. A very large W_under approaches a strict “coverage first, then excess” order. When two candidates have equal net benefit, prefer lower excess, then the lower-utilization employee, then a fixed reproducible order.
 
 **Example:** An additional eight-hour employee assigned to a partially staffed shift may resolve five missing staff-hours; assigning them elsewhere might resolve only one missing staff-hour. The first assignment offers greater coverage benefit, even if the second shift contains one larger isolated transaction count.
 
@@ -434,7 +483,7 @@ These are not interchangeable. For example, four employees capped at 24 hours su
 
 ### 6.2 Recommended information hierarchy
 
-**Top:** Schedule name, draft status, staffing threshold N, import state, and Auto-schedule action.
+**Top:** Schedule name, draft status, staffing threshold N, daily shift limit, import state, and Auto-schedule action.
 
 **Overview:** Weekly coverage percentage, uncovered staff-hours, total scheduled staff-hours, and warning count. If transactions are loaded, show relevant transaction totals.
 
@@ -454,19 +503,20 @@ These are not interchangeable. For example, four employees capped at 24 hours su
 | No staff | Explain that staff are needed; prevent meaningless generation. |
 | No valid demand | Explain import requirement and show sample format guidance. |
 | No shifts | Explain that valid shifts must be defined. |
-| Import failure | Show exact issues; preserve previous valid demand and roster. |
+| Import failure | Show all exact errors together; preserve previous valid demand and roster. Ignored summary or metadata lines appear as warnings, not failures. |
 | Generation success | Display draft and clear analysis of coverage and utilization. |
 | Generation with shortages | Display usable partial draft plus visible warnings. |
-| Invalid manual edit | Explain rule violated; preserve prior assignments. |
+| Blocked manual edit | Explain the hard rule violated (overlap or duplicate); preserve prior assignments. |
+| Manual edit with policy-limit warning | Apply the edit; show the warning next to the edited cell and on the employee (for example 40 / 32 h, +8 h over). |
 | Shift/staff removal | Explain impact and require confirmation if assigned. |
 | Existing manual edits + regeneration | Explain replacement; confirm/cancel. |
 | No scheduled staff | Show zero hours, zero coverage, and “–” for undefined ratios. |
 
 ### 6.4 Interaction details
 
-- Employee options should indicate assigned/max hours and preferably disable invalid choices *with explanations* rather than merely omitting them.
+- Employee options should indicate assigned/max hours. Options that would cause a hard-rule error are disabled *with the reason*; options that would cause only a warning remain selectable and show a pre-action notice such as “Would reach 40 / 32 h.”
 - After an edit, keep the manager near the edited cell; avoid page jumps or modal chains.
-- Use textual signals in addition to color: “Short 1,” “Covered,” “Excess 1.” Do not rely solely on red/green.
+- Use textual signals in addition to color: “Short 1,” “Covered,” “Excess 1,” “Over max +8 h.” Do not rely solely on red/green.
 - Format all ratios consistently (e.g., one decimal in the visible grid) while calculating from unrounded values.
 - The weekly roster and hourly analytics are related views of the **same current assignments**; no manual refresh should be necessary.
 - A dedicated heatmap or drag-and-drop may improve usability, but is not a prerequisite to fulfilling direct editing and real-time feedback.
@@ -483,18 +533,20 @@ These are non-negotiable properties of every saved baseline schedule unless expl
 | INV-02 | Each assignment applies to exactly one day of the typical week. | Hard rule |
 | INV-03 | One employee cannot be assigned twice to the same day/shift. | Hard rule |
 | INV-04 | One employee cannot work overlapping shifts on the same day. | Hard rule |
-| INV-05 | Assigned weekly hours for an employee do not exceed their maximum. | Hard rule |
+| INV-05 | Assigned weekly hours never exceed an employee's maximum in an automatically generated roster. A manual edit may exceed it only with a visible over-maximum warning. | Hard rule for generation; warning for manual edits |
 | INV-06 | Shift end is later than shift start and is within supported operating hours. | Hard rule |
 | INV-07 | Demand is either a complete valid 112-cell report or not accepted; missing is not zero. | Hard rule |
-| INV-08 | An unsuccessful import or edit leaves the prior valid state unchanged. | Hard rule |
+| INV-08 | An unsuccessful import or a rejected edit leaves the prior valid state unchanged. | Hard rule |
 | INV-09 | Displayed staff-hours equal time represented by current assignments. | Calculation invariant |
 | INV-10 | Overall and average transaction-per-staff-hour metrics follow distinct formulas. | Calculation invariant |
 | INV-11 | Ratio with zero staff-hours is undefined and displayed as “–”. | Calculation invariant |
 | INV-12 | Covered demand in any bucket never exceeds its required demand. | Calculation invariant |
-| INV-13 | Understaffing and overstaffing are permitted schedule states and are visible. | Soft diagnostic |
+| INV-13 | Understaffing, overstaffing, and policy-limit breaches from manual edits are permitted schedule states and are always visible. | Soft diagnostic |
 | INV-14 | Re-running generation never silently destroys existing manual assignments. | UX invariant |
 | INV-15 | Editing demand or the threshold changes demand diagnostics but not assignments without explicit regeneration. | Workflow invariant |
 | INV-16 | Automatic generation is reproducible for identical inputs and policies. | Quality invariant |
+| INV-17 | No automatically generated employee exceeds the daily shift limit. A manual edit may exceed it only with a visible warning. | Hard rule for generation; warning for manual edits |
+| INV-18 | Every violation has a severity; a proposed change is applied if and only if it has no error-severity violation. | Hard rule |
 
 ---
 
@@ -503,26 +555,30 @@ These are non-negotiable properties of every saved baseline schedule unless expl
 | Scenario | Expected behavior / risk avoided |
 |---|---|
 | Hourly transactions = 0 | Still require one employee while store is open. |
-| Missing transaction count | Reject report; do not interpret as zero. |
-| Negative, decimal, blank, or nonnumeric transactions | Reject with a specific validation error. |
+| Missing or blank transaction count | Reject the report with an error naming the day and hour; do not interpret as zero. |
+| Negative, fractional, or nonnumeric transactions | Reject with a specific validation error. |
 | Weekday columns reordered | Normalize to Monday–Sunday; do not misattribute demand. |
 | Duplicate or missing hour | Reject; do not double count or silently omit. |
 | File uses different historical date labels | Accept recognizable weekdays independently of historical date range. |
+| File contains Total/Sum rows or columns, title lines, or empty rows | Ignore them, list each as a warning with its position, and import the remaining valid data. |
 | Import fails after a previously successful import | Preserve prior demand, assignments, and summary. |
 | Demand replaced after generation | Retain roster; recompute gaps and explain the roster is not regenerated. |
 | Threshold N changed after generation | Recompute requirements and warnings; retain assignments until regenerated. |
 | No employee or no shift | Disable/decline generation with actionable explanation. |
 | Weekly capacity below minimum opening coverage | Generate partial roster where possible and quantify shortages. |
 | Total capacity exceeds total demand but shift composition is restrictive | May still have shortage; do not equate aggregate hours with feasibility. |
-| An employee has 0 maximum hours | They remain visible but cannot receive assignments; utilization is N/A. |
-| An employee's maximum is shorter than any shift | They cannot be scheduled under available shifts. |
+| An employee has 0 maximum hours | They remain visible and are never auto-assigned. A manual assignment is allowed with an over-maximum warning; utilization is N/A. |
+| An employee's maximum is shorter than any shift | They cannot be auto-scheduled; a manual assignment is allowed with an over-maximum warning. |
 | Two shifts start/end at same boundary | Treat `[start, end)` intervals as nonoverlapping. |
 | Two shift definitions overlap | Allowed globally; not allowed for same employee on same day. |
-| Manager edits a used shift to create conflicts | Reject that change with affected assignments identified. |
+| Manager edits a used shift and it creates a same-person overlap | Reject that change with affected assignments identified; nothing changes. |
+| Manager edits a used shift and it pushes someone over a weekly maximum | Accept the edit; show over-maximum warnings. |
 | Manager deletes an assigned shift | Confirm and remove dependent assignments, then recompute. |
 | Manager deletes an assigned employee | Confirm and remove dependent assignments, then recompute. |
 | Employee display names are identical | Keep employee options distinguishable. |
-| Manager attempts to exceed maximum hours | Reject and show assigned + proposed vs limit. |
+| Manager attempts to exceed maximum hours | Accept the edit; show the over-maximum warning with assigned + new hours versus the limit. |
+| Manager lowers an employee's maximum below assigned hours | Accept; keep all assignments; show the over-maximum warning with the excess. |
+| Same employee given back-to-back shifts (for example 07:00–15:00 and 15:00–23:00) | Not an overlap. Auto-generation never does this under a daily limit of 1; a manual edit is accepted with a daily-limit warning. |
 | Manager removes staff from a busy hour | Accept edit, show resulting shortage. |
 | A cell has zero scheduled employees | Show “–” for its transaction/staff-hour ratio. |
 | All cells have zero scheduled employees | Both overall and average ratios are “–”; coverage is 0%. |
@@ -530,6 +586,7 @@ These are non-negotiable properties of every saved baseline schedule unless expl
 | Two possible schedules have similar coverage | Prefer lower excess, then fairer utilization; be consistent. |
 | Manual edits exist before regeneration | Show explicit replace/cancel confirmation. |
 | All demand can be covered with fewer than all available hours | Leave unused capacity rather than staffing purposelessly. |
+| An extra employee would remove little shortage but create much excess | Not added by the generator (stop rule); the manager may still add them manually. |
 
 ### 8.1 Common analytical pitfalls
 
@@ -543,6 +600,7 @@ These are non-negotiable properties of every saved baseline schedule unless expl
 8. **Silent mutation:** A shift edit, deletion, re-import, or regeneration must not implicitly erase other business decisions without explanation.
 9. **Treating low-utilization staff as a violation:** Fairness is a goal to improve, not permission to create unnecessary shifts.
 10. **Confusing insufficient demand data with zero demand:** The first is a data-quality failure, the second is a valid observation.
+11. **Blocking what should be a warning, or the reverse:** Rejecting a manager's deliberate over-limit assignment removes a real-world option; accepting an overlap or duplicate corrupts the roster. Keep the two classes distinct and visible.
 
 ---
 
@@ -552,9 +610,11 @@ Testing must establish **business correctness**, not simply that the Auto-schedu
 
 ### 9.1 Testing layers by behavior
 
-**Input and configuration tests:** week/day normalization, time labels, complete 112-cell imports, invalid counts, duplicate/missing buckets, replacement rollback, staff/hour validation, and shift modification behavior.
+**Input and configuration tests:** week/day normalization, time labels, complete 112-cell imports, ignorable summary lines, invalid counts, duplicate/missing buckets, replacement rollback, staff/hour validation, and shift modification behavior.
 
-**Scheduling invariant tests:** for every generated draft, no maximum-hours breach, no overlapping assignment, valid references, reproducible output, and correct assignment durations.
+**Scheduling invariant tests:** for every generated draft, no maximum-hours breach, no daily-limit breach, no overlapping or duplicate assignment, valid references, reproducible output, and correct assignment durations.
+
+**Validation tests:** each violation code with its severity, an edit applied if and only if it has no error, atomic rejection, and reassignment evaluated as a single operation.
 
 **Scheduling quality tests:** compare coverage, excess and fairness for deliberately constructed scenarios, without requiring one exact roster unless a unique result is implied. Confirm that adding a candidate who resolves more uncovered staff-hours is preferred when other relevant considerations are equal.
 
@@ -564,45 +624,78 @@ Testing must establish **business correctness**, not simply that the Auto-schedu
 
 **Usability review:** a non-technical manager should identify assignees, shortages, and remaining staff capacity without understanding the optimization logic.
 
-### 9.2 Mandatory scenario checklist
+### 9.2 Mandatory scenario checklist and implementation priority
 
-| ID | Scenario | Expected result |
+Every scenario below belongs to the acceptance baseline, but they do not carry equal value. Each is tagged with an implementation priority so that limited effort goes first to the checks that protect the most important behavior.
+
+- **P0 — Core correctness. Implement and automate first.** These protect the failures that are most likely, hardest to notice by eye, and most damaging: data-import integrity, hard-rule enforcement, scheduler validity, metric arithmetic, and determinism.
+- **P1 — Valuable. Implement next.** These protect workflow and lifecycle behavior, the policy rules, and cheap unit-level formulas.
+- **P2 — Low marginal value. Verify manually or defer.** These are trivial, or are already exercised indirectly by P0 scenarios and by the interface itself.
+
+| ID | Priority | Scenario | Expected result |
+|---|---|---|---|
+| AT-01 | P2 | Create a new schedule | Monday–Sunday scope, two default shifts, and default settings (N = 20, daily shift limit = 1) are present. |
+| AT-02 | P1 | Add, edit, remove staff | Changes are reflected consistently; assigned removal is confirmed. |
+| AT-03 | P0 | Import CSV with Friday-first columns | Successful Monday–Sunday demand mapping. |
+| AT-04 | P0 | Import with shuffled weekday columns | Same normalized transaction values. |
+| AT-05 | P0 | Import CSV with malformed count (negative, fractional, text) | Clear error, previous state preserved. |
+| AT-06 | P0 | Import CSV with one missing hour | Error explicitly identifies missing data. |
+| AT-07 | P1 | Default threshold with 48 transactions | Required staff = 3 for that bucket. |
+| AT-08 | P1 | 0 transactions during open hour | Required staff = 1. |
+| AT-09 | P0 | Auto-schedule under adequate capacity | Valid demand-aware draft; coverage diagnostics accurate. |
+| AT-10 | P0 | Auto-schedule under insufficient capacity | Valid partial draft and explicit shortage report. |
+| AT-11 | P0 | Auto-schedule with employee maximum = 0 | No automatic assignment to that person. |
+| AT-12 | P0 | Try same-person overlapping manual assignment | Edit rejected (blocking error); prior roster preserved. |
+| AT-13 | P0 | Manual assignment above max hours | Edit accepted; over-maximum warning with numeric explanation (current + added versus limit). |
+| AT-14 | P0 | Remove a person from an 8-hour shift | Employee hours fall by eight; relevant coverage cells update. |
+| AT-15 | P1 | Add an overlapping peak shift definition | Definition accepted; same-person overlap still prohibited. |
+| AT-16 | P1 | Delete used shift | Warning/confirmation; affected assignments removed if confirmed. |
+| AT-17 | P1 | Edit a used shift so it creates a same-person overlap | Change rejected, affected assignments identified, no partial state change. |
+| AT-18 | P1 | Re-import different demand | Assignments stay; required staffing and warnings refresh. |
+| AT-19 | P1 | Change threshold after generation | Coverage diagnostics change; assignments remain unchanged. |
+| AT-20 | P1 | Regenerate existing edited roster and cancel | Manual assignments preserved. |
+| AT-21 | P1 | Regenerate and confirm | Draft assignments replaced in one cohesive update. |
+| AT-22 | P0 | No staff hours in a bucket | Ratio displays “–”. |
+| AT-23 | P0 | Use the 33/48/33 sample | Overall = 14.25; arithmetic average = 14.5. |
+| AT-24 | P0 | Add staff beyond a bucket's requirement | Excess increases; coverage percentage does not exceed 100%. |
+| AT-25 | P0 | Same input, run generator twice | Identical assignment outcome under the chosen deterministic policy. |
+| AT-26 | P1 | Import CSV containing a Total row and/or column | Import succeeds; ignored lines listed as warnings; totals not counted as demand. |
+| AT-27 | P0 | Import CSV with a blank cell | Error naming the day and hour; nothing stored changes. |
+| AT-28 | P1 | Manually give one person back-to-back shifts with daily limit 1 | Edit accepted with a daily-limit warning. |
+| AT-29 | P1 | Auto-schedule with default daily limit | No employee has more than one shift on any day (also covered by Section 9.4 invariants). |
+| AT-30 | P2 | Lower an employee's maximum below assigned hours | Change accepted, assignments kept, over-maximum warning shown. |
+| AT-31 | P2 | Create a shift identical to an existing one | Rejected as a duplicate definition. |
+| AT-32 | P1 | Morning-shift stop-rule example (Section 6.1) with default weights | Generator keeps 3 employees, not 4; with W_under = 4 it adds the fourth. |
+| AT-33 | P2 | Edit a used shift so someone exceeds a weekly maximum | Edit accepted; over-maximum warnings shown. |
+
+#### 9.2.1 Why these scenarios come first
+
+| Group | Scenarios | Why it carries the most value |
 |---|---|---|
-| AT-01 | Create a new schedule | Monday–Sunday scope and two default shifts are present. |
-| AT-02 | Add, edit, remove staff | Changes are reflected consistently; assigned removal is confirmed. |
-| AT-03 | Import CSV with Friday-first columns | Successful Monday–Sunday demand mapping. |
-| AT-04 | Import with shuffled weekday columns | Same normalized transaction values. |
-| AT-05 | Import CSV with malformed count | Clear error, previous state preserved. |
-| AT-06 | Import CSV with one missing hour | Error explicitly identifies missing data. |
-| AT-07 | Default threshold with 48 transactions | Required staff = 3 for that bucket. |
-| AT-08 | 0 transactions during open hour | Required staff = 1. |
-| AT-09 | Auto-schedule under adequate capacity | Valid demand-aware draft; coverage diagnostics accurate. |
-| AT-10 | Auto-schedule under insufficient capacity | Valid partial draft and explicit shortage report. |
-| AT-11 | Auto-schedule with employee maximum = 0 | No assignment to that person. |
-| AT-12 | Try same-person overlapping manual assignment | Edit rejected; prior roster preserved. |
-| AT-13 | Try manual assignment above max hours | Edit rejected with numeric explanation. |
-| AT-14 | Remove a person from an 8-hour shift | Employee hours fall by eight; relevant coverage cells update. |
-| AT-15 | Add an overlapping peak shift definition | Definition accepted; same-person overlap still prohibited. |
-| AT-16 | Delete used shift | Warning/confirmation; affected assignments removed if confirmed. |
-| AT-17 | Edit used shift causing weekly-hour violation | Change rejected without partial state changes. |
-| AT-18 | Re-import different demand | Assignments stay; required staffing and warnings refresh. |
-| AT-19 | Change threshold after generation | Coverage diagnostics change; assignments remain unchanged. |
-| AT-20 | Regenerate existing edited roster and cancel | Manual assignments preserved. |
-| AT-21 | Regenerate and confirm | Draft assignments replaced in one cohesive update. |
-| AT-22 | No staff hours in a bucket | Ratio displays “–”. |
-| AT-23 | Use the 33/48/33 sample | Overall = 14.25; arithmetic average = 14.5. |
-| AT-24 | Add staff beyond a bucket's requirement | Excess increases; coverage percentage does not exceed 100%. |
-| AT-25 | Same input, run generator twice | Identical assignment outcome under the chosen deterministic policy. |
+| Import integrity | AT-03, AT-04, AT-05, AT-06, AT-27 | A mis-mapped day or a blank read as zero silently corrupts every later number; the logic is a pure function, so tests are cheap and decisive. |
+| Scheduler validity and determinism | AT-09, AT-10, AT-11, AT-25 | The generator is the heart of the product; these prove it is demand-aware, respects hard rules, degrades gracefully, and is reproducible. |
+| Edit rules | AT-12, AT-13, AT-14 | The split between blocking errors and warnings is the main interaction decision; these prove overlaps are blocked, over-maximum is warned, and coverage updates correctly. |
+| Metric arithmetic | AT-22, AT-23, AT-24 | Small but highly visible; the overall-versus-average distinction and division-by-zero handling are common sources of wrong numbers. |
+
+**Suggested implementation order:**
+
+1. Metric arithmetic (AT-22 to AT-24) and import (AT-03 to AT-06, AT-27): pure functions with no interface dependency.
+2. Scheduler and the property-style invariants of Section 9.4 (AT-09 to AT-11, AT-25). The invariants belong to the P0 tier.
+3. Edit validation (AT-12 to AT-14).
+4. P1 scenarios in this order: policy rules (AT-32, AT-28, AT-29), lifecycle protections (AT-18 to AT-21, AT-16, AT-17, AT-15), cheap formulas (AT-07, AT-08), CSV tolerance (AT-26), staff maintenance (AT-02).
+5. P2 scenarios through a manual walkthrough of the user journey (Section 9.1), or deferred.
+
+If time runs short, finish every P0 scenario before starting any P1 scenario, and record unfinished P1 and P2 scenarios as deferred in the delivery notes.
 
 ### 9.3 Acceptance of optimization quality
 
 The assignment does not prescribe an objectively optimal roster. Evaluate proposed outputs using the following order:
 
-1. **Hard validity:** Zero violations.
-2. **Demand coverage:** Lower unmet required staff-hours is better.
+1. **Hard validity:** Zero hard-rule violations, and no weekly-maximum or daily-limit breach in a generated roster.
+2. **Demand coverage:** Lower unmet required staff-hours is better, except where it is obtained only by creating more weighted excess than the shortage removed (the stop rule in Section 5.3).
 3. **Excess staffing:** For equivalent coverage, fewer excess staff-hours is better.
-4. **Fairness:** For comparable coverage/excess, more balanced utilization is better.
-5. **Transparency:** All remaining shortages and noteworthy allocation imbalances are visible.
+4. **Fairness:** For comparable coverage and excess, more balanced utilization is better.
+5. **Transparency:** All remaining shortages, policy-limit warnings, and noteworthy allocation imbalances are visible.
 
 **Important qualification:** This order describes the desired policy; a heuristic may not always discover the best global outcome. The baseline acceptance bar is a defensible, plausible, demand-aware roster—not a proof of global optimality. A quality test should flag obvious avoidable shortages, not falsely claim one exact optimal assignment is mandatory.
 
@@ -610,13 +703,15 @@ The assignment does not prescribe an objectively optimal roster. Evaluate propos
 
 Across many generated, valid input scenarios, verify:
 
-- Assigned hours for each person never exceed their maximum.
+- In a generated roster, assigned hours for each person never exceed their maximum, and shifts per person per day never exceed the daily shift limit.
 - No employee occupies two overlapping shift intervals on the same day.
 - Every assignment has a valid employee, shift and day.
 - All scheduled hours summed over employees equal scheduled staff-hours summed over the hourly coverage grid under the baseline whole-hour rules.
 - `covered <= required` in every bucket and total coverage rate is within 0–100%.
 - All ratios are finite or explicitly undefined as “–”; never display NaN or infinity.
-- Invalid changes are atomic and cannot corrupt previously valid schedule state.
+- Rejected changes (hard-rule errors) are atomic and cannot corrupt previously valid schedule state.
+- For any proposed edit, validation is a pure function of the current schedule and the proposed change, and the edit is applied if and only if no violation has error severity.
+- Every state in which an employee exceeds a weekly maximum or the daily shift limit has a matching visible warning.
 
 Avoid false assertions such as “more transaction demand always creates greater actual coverage”: staffing capacity may be fixed, and the roster may retain shortages.
 
@@ -646,15 +741,19 @@ Confusing navigation, hidden warnings, or misleading ratio labels are product de
 | D-03 | Whole-hour, same-day shifts only | Keeps calculation and editing semantics unambiguous. |
 | D-04 | 20 transactions per employee-hour by default, configurable | Explicit and transparent demand proxy. |
 | D-05 | Minimum one employee per open hour | Basic staffing floor. |
-| D-06 | Cover demand, then reduce excess, then improve fairness | Avoids sacrificing operation for cosmetic equality. |
+| D-06 | Cover demand first, charge for excess through a cost-benefit stop rule (W_under = 3, W_over = 1), then improve fairness | Coverage dominates, but marginal coverage is not bought with large unnecessary excess. |
 | D-07 | Fairness measured by normalized utilization | Accounts for different hour limits. |
-| D-08 | Max hours and same-person overlaps are hard rules for generation and manual edits | Prevents intrinsically invalid saved rosters. |
+| D-08 | Overlap, duplicate assignment, and invalid references are blocking errors for generation and manual edits; weekly maximum and daily shift limit are hard for generation but warnings for manual edits | Prevents impossible rosters while keeping the manager in control of deliberate exceptions. |
 | D-09 | Shortage and excess are visible warnings | Supports best-effort scheduling. |
 | D-10 | Valid new demand replaces old demand while retaining roster | Separates observation updates from manager assignments. |
-| D-11 | Editing an in-use shift cannot introduce assignment invalidity | Maintains coherent saved state. |
+| D-11 | Editing an in-use shift cannot create a same-person overlap; weekly-hour and daily-limit consequences are warnings | Maintains coherent saved state without blocking legitimate adjustments. |
 | D-12 | Regeneration replaces assignments after confirmation | Simple and predictable lifecycle. |
 | D-13 | No minimum utilization guarantee | Avoids infeasible or wasteful staffing mandates. |
 | D-14 | Reproducible generation for identical inputs | Supports trust and repeatable evaluation. |
+| D-15 | Import findings are errors (reject the file) or warnings (ignored summary and metadata lines); blank cells are errors, never zeros | Preserves data integrity while tolerating common report variations. |
+| D-16 | Daily shift limit defaults to 1 per employee per day, configurable per schedule | Prevents unrealistic back-to-back double shifts by default; manual exceptions are visible warnings. |
+| D-17 | One validation model with error/warning severities and a single severity policy table | Same rules everywhere; changing a rule's severity is a one-place policy change. |
+| D-18 | Acceptance scenarios carry priority tiers (P0/P1/P2) that guide delivery order | Focuses limited effort on the highest-value checks first. |
 
 ### 10.2 Explicitly unresolved / future product decisions
 
@@ -662,15 +761,16 @@ These questions are **not answered by the source assignment** and should not be 
 
 - Are staff breaks paid or unpaid, and do they count as floor coverage?
 - Are overnight shifts, fractional hours, and variable store operating hours required?
-- Are there legal rest-period, overtime, or consecutive-day restrictions?
+- Are there legal rest-period, overtime, or consecutive-day restrictions? (The daily shift limit is a simple default, not a legal rest-period rule.)
 - Should staff availability, leave, skills, minimum days off, or supervisor coverage become mandatory?
 - Does the business value peak-hour shortages more heavily than other unmet staff-hours?
-- Should managers be able to override weekly maximums with an explicit exception?
+- Should a manual assignment above the weekly maximum require explicit confirmation or a recorded reason, rather than only a warning?
 - Should locked assignments survive regeneration?
 - Is scheduling intended for actual calendar weeks, holidays, or multiple stores?
 - Does historical demand represent a single observed week or an average across many weeks?
 - What employee service capacity can be empirically justified, and should it vary by role or hour?
 - Are approval, publication, export, notifications, payroll, or audit histories required?
+- Should the trade-off weights (W_under, W_over) be adjustable by the manager, or remain fixed policy constants?
 
 Do not treat the absence of these features as defects against this BRD. Record any additions as deliberate scope changes.
 
@@ -682,18 +782,18 @@ The baseline is complete when all conditions below are met:
 
 - [ ] A manager can create and identify an independent typical-week schedule.
 - [ ] Staff can be added, edited and removed with clear maximum-hour rules.
-- [ ] The supplied Friday-first, 07:00–22:00-hour CSV structure imports correctly and robustly.
+- [ ] The supplied Friday-first CSV structure (7am–10pm hour labels) imports correctly; summary and metadata lines are ignored with warnings; blank, missing, duplicate, or invalid cells are reported as errors.
 - [ ] Both default shifts exist, and shifts can be safely created, edited and removed.
 - [ ] The transaction-to-required-staff assumption is visible and applied consistently.
-- [ ] Auto-schedule produces a plausible demand-aware draft without violating hard constraints.
+- [ ] Auto-schedule produces a plausible demand-aware draft without violating hard rules, weekly maximums, or the daily shift limit.
 - [ ] Insufficient capacity creates a readable partial result and shortage diagnostics.
 - [ ] Roster is clear by weekday, shift, and assigned employees.
-- [ ] Manager can directly assign, reassign and remove employees.
+- [ ] Manager can directly assign, reassign and remove employees; impossible assignments are blocked with a reason, and policy-limit breaches are accepted with a visible warning.
 - [ ] Summary, coverage and warnings update immediately after relevant changes.
 - [ ] Hourly and weekly transaction/staff-hour metrics use the specified formulas, including undefined-value handling.
-- [ ] Invalid imports and edits never silently corrupt or partially overwrite state.
+- [ ] Invalid imports and rejected edits never silently corrupt or partially overwrite state.
 - [ ] Regeneration does not silently destroy manual changes.
-- [ ] Core scenario and invariant tests pass, including numerical summary examples.
+- [ ] All P0 scenarios (Section 9.2) and the property-style invariants (Section 9.4) pass, including numerical summary examples; P1 scenarios are implemented or listed as deferred; P2 scenarios are verified manually or deferred.
 - [ ] Assumptions and optimization trade-offs are documented and consistent with actual product behavior.
 
 ### Delivery constraints carried over from the assignment
@@ -723,6 +823,7 @@ These ratios alone do not indicate whether the customer experience is good; the 
 - Four full-shift employees contribute 32 scheduled staff-hours: zero shortages, 11 excess.
 - Three full-shift employees contribute 24 scheduled staff-hours: two unmet staff-hours at the two buckets requiring four employees, and five excess staff-hours elsewhere.
 - A shorter overlapping peak shift can potentially better target coverage, but the scheduler may only use configured shifts.
+- With the default weights (W_under = 3, W_over = 1) the generator stops at three employees: the fourth would remove 2 shortage-hours (benefit 3 × 2 = 6) while adding 6 excess staff-hours (cost 6), a net benefit of 0.
 
 ### Example C — Capacity shortfall
 
@@ -750,4 +851,4 @@ These ratios alone do not indicate whether the customer experience is good; the 
 
 **Build a demand-driven, constraint-aware, explainable staff scheduler that leaves the manager in control.**
 
-The proposed schedule must be understandable, editable, operationally useful, and honest about its limitations. A clean draft with explicit unmet demand is more valuable than a falsely “complete” roster that exceeds staff limits, hides errors, or cannot be meaningfully adjusted.
+The proposed schedule must be understandable, editable, operationally useful, and honest about its limitations. A clean draft with explicit unmet demand is more valuable than a falsely “complete” roster that silently exceeds staff limits, hides errors, or cannot be meaningfully adjusted.
