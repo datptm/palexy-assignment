@@ -1,0 +1,15 @@
+.env
+
+.venv/
+.deps/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+pytest-cache-files-*/
+.test-tmp/
+.ruff_cache/
+.coverage
+htmlcov/
+.nicegui/
+data/*.sqlite3*
