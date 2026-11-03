@@ -79,6 +79,11 @@ Trust boundary: browser input, uploaded transaction files, environment values, a
 
 ## Known pitfalls (agent mistakes to avoid)
 - Do not present the scaffold landing page as a completed scheduling workflow.
+- Treat CSV and integer inputs as untrusted; validate type, range, and structure before every write.
+- Zero transactions are valid demand; missing demand is not zero, and the system must keep those cases distinct.
+- Refresh previews must be version-bound and stale confirmations must be rejected; never mutate active state during a preview.
+- Generator tie-breaks are deterministic and rely on stable IDs; do not add randomness or database-order-dependent logic.
+- Keep state changes atomic across history snapshots, demand updates, and roster replacement; partial writes are rejected.
 
 ## References
 - `docs/resources/SWE_Take-Home_Staff_Scheduling_System.pdf`: assignment brief.

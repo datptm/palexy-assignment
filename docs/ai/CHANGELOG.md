@@ -24,3 +24,11 @@
 - Why: Let a manager exercise the backend and inspect actual schedule state while the NiceGUI page remains a scaffold.
 - Verification: `.venv/Scripts/python.exe -m pytest -q --tb=line -p no:cacheprovider --basetemp=.test-tmp/scripts-full`: 81 passed, 3 opt-in performance benchmarks skipped. `.venv/Scripts/python.exe -m ruff check .`: passed. `.venv/Scripts/python.exe -m ruff format --check .`: 67 files formatted. `.venv/Scripts/python.exe -m compileall -q src ui tests scripts main.py`: passed. All three `python -m scripts.<command> --help` invocations passed. `git diff --check`: passed.
 - Risks / follow-ups: The scripts expose selected actions; shift editing and assignment editing still require the service API. CSV files are accepted only inside `data/`.
+
+## 2026-11-03 17:45 (UTC) - Add staff scheduling UI red tests
+- Task: `staff-scheduling-ui` Stage 4 tests first
+- Changes: Added the Stage 4 test matrix and red-run report; added read-only manual-preview, page session, presentation, and workflow tests with a NiceGUI simulator helper. Production code and existing fixtures were not changed.
+- Files: `docs/ai/staff-scheduling-ui/04-tests.md`, `tests/ui_support.py`, `tests/test_manual_previews.py`, `tests/test_ui_session.py`, `tests/test_ui_presentation.py`, `tests/test_ui_workflows.py`, `docs/ai/CHANGELOG.md`
+- Why: Make the approved `01-spec.md`, `02-design.md`, and `03-plan.md` observable before UI implementation.
+- Verification: `.venv/Scripts/python.exe -m pytest -q --tb=line -p no:cacheprovider`: 37 expected feature failures, 81 passed, 3 opt-in benchmarks skipped; no collection or fixture errors. Ruff check with `--no-cache`, Ruff format check, and compileall all passed. A sandboxed pytest attempt could not clean its workspace temp directory; the final run used a writable test process. No implementation or browser visual check was run.
+- Risks / follow-ups: Preview field names and accessible control wording are proposed test contracts for review. The untested cases and manual checks are listed in `04-tests.md`; tests are intentionally red until implementation.
