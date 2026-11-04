@@ -1,7 +1,18 @@
 """Rendered roster, demand, coverage, and warning contracts."""
 
+import pytest
+
+from src.model.scheduling import SchedulingError
 from tests.scheduling_support import week_csv
 from tests.ui_support import manager_page, sync_test
+from ui.presentation import whole_number
+
+
+def test_whole_number_rejects_oversized_browser_value() -> None:
+    """A very long numeric field is rejected before integer conversion or a write."""
+    with pytest.raises(SchedulingError) as failure:
+        whole_number("9" * 5000, "weekly_max_hours")
+    assert failure.value.code == "INVALID_INTEGER"
 
 
 @sync_test
@@ -56,6 +67,8 @@ async def test_analysis_distinguishes_missing_demand_from_imported_zero(
 
     async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, _):
         await user.should_see("Import demand to see coverage")
+        user.find("Hourly analysis").click()
+        await user.should_see("Coverage unavailable")
         user.find(f"Zero #{schedule_ids[1]}").click()
         user.find("Hourly analysis").click()
 
@@ -89,6 +102,8 @@ async def test_analysis_or_warning_shows_numeric_gap_and_overage(tmp_path, monke
         await user.should_see("Excess 1")
         await user.should_see("100% coverage")
         await user.should_see("OVER_WEEKLY_MAX")
+        user.find("Locate warning").click()
+        await user.should_see("Showing A")
 
 
 @sync_test

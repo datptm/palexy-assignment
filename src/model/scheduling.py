@@ -172,6 +172,56 @@ class Preview:
 
 
 @dataclass(frozen=True)
+class AssignmentOptionPreview:
+    """Projected effect of assigning one stable employee ID to a cell."""
+
+    employee_id: int
+    blocked: bool
+    findings: tuple[Violation, ...]
+    current_hours: int
+    projected_hours: int | None
+    weekly_max_hours: int
+    current_daily_shift_count: int
+    projected_daily_shift_count: int | None
+    daily_shift_limit: int
+    before_hourly: tuple[HourlyMetric, ...]
+    after_hourly: tuple[HourlyMetric, ...] | None
+    before_weekly: WeeklyMetric
+    after_weekly: WeeklyMetric | None
+
+
+@dataclass(frozen=True)
+class AssignmentOptionsPreview:
+    """All employee choices evaluated from one schedule version."""
+
+    schedule_id: int
+    baseline_version: int
+    day: int
+    shift_id: int
+    replacing_assignment_id: int | None
+    options: tuple[AssignmentOptionPreview, ...]
+
+
+@dataclass(frozen=True)
+class ShiftEditPreview:
+    """Read-only impact of a proposed shift definition."""
+
+    schedule_id: int
+    baseline_version: int
+    shift_id: int
+    old_start_hour: int
+    old_end_hour: int
+    new_start_hour: int
+    new_end_hour: int
+    old_duration: int
+    new_duration: int
+    affected_assignment_ids: tuple[int, ...]
+    affected_employee_days: tuple[tuple[int, int], ...]
+    findings: tuple[Violation, ...]
+    projected_result: ScheduleResult | None
+
+
+@dataclass(frozen=True)
 class HistoricalSnapshot:
     """Immutable prior state and its captured analytics."""
 

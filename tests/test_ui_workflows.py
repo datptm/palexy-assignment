@@ -28,6 +28,7 @@ async def test_staff_edit_invalid_limit_preserves_input_and_same_name_id(
         user.find("Save employee").click()
 
         await user.should_see("weekly_max_hours")
+        assert next(iter(input_field(user, "Weekly maximum").elements)).value == "-1"
         assert service.get_schedule(ids[0]) == before
 
 
@@ -115,6 +116,32 @@ async def test_shift_edit_or_removal_conflict_and_cancel_keep_used_shift(
 
 
 @sync_test
+async def test_used_shift_warning_preview_can_save_after_review(tmp_path, monkeypatch) -> None:
+    """A policy warning allows a reviewed definition edit at version zero or later."""
+    ids = []
+
+    def seed(service):
+        schedule_id = service.create_schedule("Week").id
+        service.add_employee(schedule_id, "Alex", 8)
+        state = service.get_schedule(schedule_id).state
+        service.add_assignment(schedule_id, state.employees[0].id, 0, state.shifts[0].id)
+        ids.extend((schedule_id, state.shifts[0].id))
+
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, service):
+        user.find("Shifts").click()
+        user.find(f"Edit shift #{ids[1]}").click()
+        input_field(user, "End hour").clear().type("16")
+        user.find("Preview shift edit").click()
+        await user.should_see("OVER_WEEKLY_MAX")
+        user.find("Save shift").click()
+
+        await user.should_see("07:00–16:00")
+        saved = service.get_schedule(ids[0])
+        assert saved.state.shifts[0].end_hour == 16
+        assert saved.employees[0].assigned_hours == 9
+
+
+@sync_test
 async def test_assignment_add_or_remove_updates_hours_without_reload(tmp_path, monkeypatch) -> None:
     """An empty cell accepts a manual assignment before demand and removal reverses it."""
     ids = []
@@ -133,6 +160,7 @@ async def test_assignment_add_or_remove_updates_hours_without_reload(tmp_path, m
 
         user.find("Remove assignment").click()
         await user.should_see("Unassigned")
+        await user.should_not_see("Alex #1")
         assert service.get_schedule(ids[0]).state.assignments == ()
 
 
@@ -160,6 +188,7 @@ async def test_reassignment_stale_preview_preserves_original_assignment(
         user.find("Save reassignment").click()
 
         await user.should_see("STALE_PREVIEW")
+        await user.should_not_see("Save reassignment")
         assert service.get_schedule(ids[0]).state.assignments[0] == original
 
 
@@ -214,6 +243,7 @@ async def test_import_valid_report_shows_findings_then_commits_without_roster(
         assert service.get_schedule(ids[0]).state.demand is None
 
         user.find("Import demand").click()
+        await user.should_see("Imported demand")
         saved = service.get_schedule(ids[0])
         assert len(saved.state.demand) == 112
         assert saved.state.assignments == ()
@@ -329,6 +359,7 @@ async def test_refresh_confirmation_uses_same_proposal_and_saves_prior_state(
         assert service.list_snapshots(ids[0]) == []
 
         user.find("Confirm replacement").click()
+        await user.should_see("Threshold: 10")
         assert service.get_schedule(ids[0]).state.threshold == 10
         snapshots = service.list_snapshots(ids[0])
         assert len(snapshots) == 1
@@ -380,7 +411,65 @@ async def test_history_is_read_only_and_return_reloads_active_result(tmp_path, m
         await user.should_see("Historical / read-only")
         await user.should_see("Threshold: 20")
         await user.should_not_see("Restore snapshot")
+        await user.should_not_see("Auto-schedule")
+        await user.should_not_see("Add employee")
 
         user.find("Return to active").click()
         await user.should_see("Threshold: 10")
         assert service.get_schedule(ids[0]).state.threshold == 10
+
+
+@sync_test
+async def test_reassignment_moves_to_selected_destination_atomically(tmp_path, monkeypatch) -> None:
+    """A reviewed move changes person, day, and shift in one service write."""
+    ids = []
+
+    def seed(service):
+        schedule_id = service.create_schedule("Week").id
+        for name in ("Alex", "Bea"):
+            service.add_employee(schedule_id, name, 16)
+        state = service.get_schedule(schedule_id).state
+        service.add_assignment(schedule_id, state.employees[0].id, 0, state.shifts[0].id)
+        ids.append(schedule_id)
+
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, service):
+        original = service.get_schedule(ids[0]).state.assignments[0]
+        state = service.get_schedule(ids[0]).state
+        user.find("Monday 07:00–15:00").click()
+        user.find("Reassign").click()
+        user.find("Destination Tuesday 15:00–23:00").click()
+        user.find("Bea").click()
+        user.find("Save reassignment").click()
+
+        await user.should_see("Bea #2")
+        saved = service.get_schedule(ids[0]).state.assignments
+        assert len(saved) == 1
+        assert saved[0].id == original.id
+        assert (saved[0].employee_id, saved[0].day, saved[0].shift_id) == (
+            state.employees[1].id,
+            1,
+            state.shifts[1].id,
+        )
+
+
+@sync_test
+async def test_changed_threshold_discards_reviewed_refresh(tmp_path, monkeypatch) -> None:
+    """Editing the proposed threshold invalidates its signed preview in the page."""
+    ids = []
+
+    def seed(service):
+        schedule_id = service.create_schedule("Week").id
+        service.import_initial(schedule_id, week_csv())
+        service.add_employee(schedule_id, "Alex", 8)
+        ids.append(schedule_id)
+
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, service):
+        input_field(user, "Threshold").clear().type("10")
+        user.find("Preview threshold change").click()
+        await user.should_see("replaces all assignments")
+        input_field(user, "Threshold").clear().type("11")
+        user.find("Confirm replacement").click()
+
+        await user.should_see("Preview changed")
+        assert service.get_schedule(ids[0]).state.threshold == 20
+        assert service.list_snapshots(ids[0]) == []

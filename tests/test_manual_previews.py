@@ -211,3 +211,59 @@ def test_assignment_preview_rejects_foreign_employee_reference(tmp_path) -> None
 
     assert failure.value.code == "UNKNOWN_REFERENCE"
     assert service.get_schedule(schedule_id) == before
+
+
+def test_reviewed_shift_edit_accepts_initial_version_zero(tmp_path) -> None:
+    """A newly created schedule can save its first version-bound shift edit."""
+    service, schedule_id = _schedule(tmp_path)
+    state = _state(service, schedule_id)
+    assert state.version == 0
+
+    preview = service.preview_shift_edit(schedule_id, state.shifts[0].id, 7, 14)
+    saved = service.edit_shift(
+        schedule_id,
+        state.shifts[0].id,
+        7,
+        14,
+        expected_version=preview.baseline_version,
+    )
+
+    assert saved.state.version == 1
+    assert saved.state.shifts[0].end_hour == 14
+
+
+def test_reassignment_preview_includes_origin_and_destination_hours(tmp_path) -> None:
+    """A move preview reports coverage changes at both ends of the move."""
+    service, schedule_id = _schedule(tmp_path)
+    employee = _employee(service, schedule_id)
+    service.import_initial(schedule_id, week_csv())
+    state = _state(service, schedule_id)
+    service.add_assignment(schedule_id, employee.id, 0, state.shifts[0].id)
+    assignment_id = _state(service, schedule_id).assignments[0].id
+
+    preview = service.preview_assignment_options(
+        schedule_id,
+        1,
+        state.shifts[1].id,
+        replacing_assignment_id=assignment_id,
+    )
+    option = preview.options[0]
+
+    assert {(cell.day, cell.hour) for cell in option.before_hourly} == {
+        (day, hour) for day, start in ((0, 7), (1, 15)) for hour in range(start, start + 8)
+    }
+    assert {(cell.day, cell.hour) for cell in option.after_hourly} == {
+        (day, hour) for day, start in ((0, 7), (1, 15)) for hour in range(start, start + 8)
+    }
+
+
+def test_shift_preview_rejects_noninteger_range_without_writing(tmp_path) -> None:
+    """Malformed browser times produce a structured error and retain the shift."""
+    service, schedule_id = _schedule(tmp_path)
+    before = service.get_schedule(schedule_id)
+
+    with pytest.raises(SchedulingError) as failure:
+        service.preview_shift_edit(schedule_id, before.state.shifts[0].id, "7", 15)
+
+    assert failure.value.code == "INVALID_SHIFT_RANGE"
+    assert service.get_schedule(schedule_id) == before
