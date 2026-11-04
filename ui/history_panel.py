@@ -7,6 +7,7 @@ from nicegui import ui
 from src.domain.periods import WEEKDAYS
 from ui.presentation import hour_range, person_label, ratio
 from ui.session import PageSession
+from ui.tables import render_data_table
 
 
 def render_history(page: PageSession) -> None:
@@ -59,28 +60,30 @@ def render_history(page: PageSession) -> None:
     with ui.element("div").classes("schedule-workspace-grid schedule-workspace-grid--even"):
         with ui.card().classes("schedule-workspace-card"):
             ui.label("Demand").classes("schedule-workspace-card-title")
-            with ui.element("div").classes("schedule-demand-table max-h-56"):
-                for cell in snapshot.state.demand or ():
-                    ui.label(
-                        f"{WEEKDAYS[cell.day]} {cell.hour:02d}:00: {cell.transactions}"
-                    ).classes("schedule-demand-row")
+            render_data_table(
+                ("Day", "Hour", "Transactions"),
+                (
+                    (WEEKDAYS[cell.day], f"{cell.hour:02d}:00", str(cell.transactions))
+                    for cell in snapshot.state.demand or ()
+                ),
+            )
         with ui.card().classes("schedule-workspace-card"):
             ui.label("Assignments").classes("schedule-workspace-card-title")
-            with ui.element("div").classes("max-h-56 overflow-auto"):
-                for assignment in snapshot.state.assignments:
-                    shift = next(
-                        item for item in snapshot.state.shifts if item.id == assignment.shift_id
+            shifts = {shift.id: shift for shift in snapshot.state.shifts}
+            employees = {person.id: person for person in snapshot.state.employees}
+            render_data_table(
+                ("Day", "Shift", "Employee"),
+                (
+                    (
+                        WEEKDAYS[item.day],
+                        hour_range(
+                            shifts[item.shift_id].start_hour, shifts[item.shift_id].end_hour
+                        ),
+                        person_label(employees[item.employee_id].name, item.employee_id),
                     )
-                    person = next(
-                        item
-                        for item in snapshot.state.employees
-                        if item.id == assignment.employee_id
-                    )
-                    ui.label(
-                        f"{WEEKDAYS[assignment.day]} "
-                        f"{hour_range(shift.start_hour, shift.end_hour)} "
-                        f"{person_label(person.name, person.id)}"
-                    )
+                    for item in snapshot.state.assignments
+                ),
+            )
     if snapshot.warnings:
         with ui.card().classes("schedule-workspace-card"):
             ui.label("Captured warnings").classes("schedule-workspace-card-title")
@@ -90,14 +93,19 @@ def render_history(page: PageSession) -> None:
                 )
     with ui.card().classes("schedule-workspace-card"):
         ui.label("Captured hourly analysis").classes("schedule-workspace-card-title")
-        with ui.element("div").classes("schedule-hourly-table max-h-56"):
-            for cell in snapshot.hourly:
-                ui.label(
-                    f"{WEEKDAYS[cell.day]} {cell.hour:02d}:00 · "
-                    f"{cell.transactions if cell.transactions is not None else '–'} transactions · "
-                    f"{cell.required if cell.required is not None else '–'} required · "
-                    f"{cell.scheduled} scheduled"
-                ).classes("schedule-demand-row")
+        render_data_table(
+            ("Day", "Hour", "Transactions", "Required", "Scheduled"),
+            (
+                (
+                    WEEKDAYS[cell.day],
+                    f"{cell.hour:02d}:00",
+                    str(cell.transactions) if cell.transactions is not None else "–",
+                    str(cell.required) if cell.required is not None else "–",
+                    str(cell.scheduled),
+                )
+                for cell in snapshot.hourly
+            ),
+        )
 
 
 async def _open(page, snapshot_id: int) -> None:

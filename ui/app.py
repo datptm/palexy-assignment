@@ -8,7 +8,7 @@ from src.model.scheduling import SchedulingError
 from ui.analysis_panel import render_analysis
 from ui.demand_panel import render_demand
 from ui.history_panel import render_history
-from ui.roster import render_roster
+from ui.roster import render_roster, render_roster_dialog
 from ui.session import PageSession
 from ui.shift_panel import render_shifts
 from ui.staff_panel import render_staff
@@ -171,6 +171,49 @@ PAGE_STYLES = """
     .schedule-workspace-card-title { color: #23344c; font-size: .9rem; font-weight: 700; }
     .schedule-workspace-card .q-field { width: 100%; }
     .schedule-workspace-card .q-btn { max-width: 100%; }
+    .schedule-assignment-dialog { gap: 14px; }
+    .q-dialog__inner--minimized > .schedule-assignment-dialog {
+        max-width: min(920px, calc(100vw - 40px)) !important;
+        width: min(920px, calc(100vw - 40px)) !important;
+    }
+    .schedule-assignment-grid {
+        align-items: start;
+        display: grid;
+        gap: 14px;
+        grid-template-columns: minmax(240px, .85fr) minmax(0, 1.15fr);
+        width: 100%;
+    }
+    .schedule-assignment-section { gap: 10px; }
+    .schedule-assignment-moving {
+        background: #eaf2fb;
+        border-radius: 8px;
+        color: #315d8a;
+        padding: 10px 14px;
+        width: 100%;
+    }
+    .schedule-assignment-person-row, .schedule-assignment-destination-row {
+        align-items: center;
+        border-top: 1px solid #e8edf2;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: space-between;
+        padding: 9px 0;
+        width: 100%;
+    }
+    .schedule-assignment-destinations { max-height: 220px; overflow-y: auto; width: 100%; }
+    .schedule-assignment-day { color: #334155; font-size: .82rem; font-weight: 650; min-width: 90px; }
+    .schedule-assignment-destination-row .q-btn { font-size: .78rem; }
+    .schedule-assignment-choices { display: grid; gap: 8px; max-height: 340px; overflow-y: auto; width: 100%; }
+    .schedule-assignment-choice {
+        border: 1px solid #e6ebf1;
+        border-radius: 8px;
+        padding: 9px 11px;
+        width: 100%;
+    }
+    .schedule-assignment-choice--selected { background: #eef8f8; border-color: #76c9c2; }
+    .schedule-assignment-reasons { color: #96620d; font-size: .78rem; }
+    .schedule-assignment-primary { align-self: flex-end; }
     .schedule-workspace-list { gap: 8px; width: 100%; }
     .schedule-workspace-row {
         align-items: center;
@@ -185,16 +228,20 @@ PAGE_STYLES = """
     }
     .schedule-workspace-row-main { flex: 1 1 180px; min-width: 0; }
     .schedule-workspace-row-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 4px; }
-    .schedule-demand-table, .schedule-hourly-table { max-width: 100%; overflow: auto; width: 100%; }
-    .schedule-demand-row {
+    .schedule-hourly-table { max-width: 100%; overflow: auto; width: 100%; }
+    .schedule-table-scroll { max-height: 260px; max-width: 100%; overflow: auto; width: 100%; }
+    .schedule-data-table { border-collapse: collapse; font-size: .82rem; min-width: 440px; width: 100%; }
+    .schedule-data-table th, .schedule-data-table td {
         border-bottom: 1px solid #e8edf2;
-        color: #334155;
-        font-size: .78rem;
-        min-height: 31px;
-        padding: 6px 9px;
-        white-space: nowrap;
+        padding: 7px 10px;
+        text-align: left;
+        vertical-align: top;
     }
-    .schedule-demand-row:nth-child(even), .schedule-hourly-row:nth-child(even) { background: #f5f8fa; }
+    .schedule-data-table th { background: #f0f4f7; color: #334155; font-weight: 700; position: sticky; top: 0; }
+    .schedule-data-table tbody tr:nth-child(even) { background: #f8fafc; }
+    .schedule-review-list { list-style: disc; margin: 0; padding-left: 22px; }
+    .schedule-review-list li { margin: 5px 0; }
+    .schedule-hourly-row:nth-child(even) { background: #f5f8fa; }
     .schedule-hourly-row {
         align-items: center;
         border-bottom: 1px solid #e8edf2;
@@ -277,7 +324,8 @@ PAGE_STYLES = """
             width: calc(100vw - 20px);
         }
         .schedule-workspace-grid,
-        .schedule-workspace-grid--even { grid-template-columns: minmax(0, 1fr); }
+        .schedule-workspace-grid--even,
+        .schedule-assignment-grid { grid-template-columns: minmax(0, 1fr); }
         .schedule-workspace-title { font-size: 1.1rem; }
     }
 </style>
@@ -390,32 +438,38 @@ async def home_page() -> None:
                         "font-semibold"
                     )
             render_roster(page)
-            if page.tab != "Roster":
-                workspace = ui.dialog().props("persistent")
-                with workspace:
-                    with ui.card().classes("schedule-card schedule-workspace-dialog"):
-                        with ui.row().classes("schedule-header-row justify-between"):
-                            ui.label(page.tab).classes("schedule-card-title")
-                            ui.button(
-                                "Close",
-                                icon="close",
-                                on_click=lambda: set_tab("Roster"),
-                            ).props("flat")
-                        if page.error:
-                            ui.label(page.error).classes("schedule-alert schedule-alert--error")
-                        if page.message:
-                            ui.label(page.message).classes("schedule-alert schedule-alert--success")
-                        if page.tab == "Staff":
-                            render_staff(page)
-                        elif page.tab == "Shifts":
-                            render_shifts(page)
-                        elif page.tab == "Demand import":
-                            render_demand(page)
-                        elif page.tab in ("Hourly analysis", "Warnings"):
-                            render_analysis(page)
-                        elif page.tab == "History":
-                            render_history(page)
-                workspace.open()
+
+    dialog = ui.dialog().props("persistent")
+
+    @ui.refreshable
+    def dialog_content() -> None:
+        if page.result is None:
+            return
+        if page.tab == "Roster":
+            render_roster_dialog(page)
+        else:
+            with ui.card().classes("schedule-card schedule-workspace-dialog"):
+                with ui.row().classes("schedule-header-row justify-between"):
+                    ui.label(page.tab).classes("schedule-card-title")
+                    ui.button(
+                        "Close",
+                        icon="close",
+                        on_click=lambda: set_tab("Roster"),
+                    ).props("flat")
+                if page.error:
+                    ui.label(page.error).classes("schedule-alert schedule-alert--error")
+                if page.message:
+                    ui.label(page.message).classes("schedule-alert schedule-alert--success")
+                if page.tab == "Staff":
+                    render_staff(page)
+                elif page.tab == "Shifts":
+                    render_shifts(page)
+                elif page.tab == "Demand import":
+                    render_demand(page)
+                elif page.tab in ("Hourly analysis", "Warnings"):
+                    render_analysis(page)
+                elif page.tab == "History":
+                    render_history(page)
 
     def set_tab(tab: str) -> None:
         page.tab = tab
@@ -427,9 +481,21 @@ async def home_page() -> None:
 
     def refresh_now() -> None:
         content._execute_refresh((), {}, instance=content.instance)
+        dialog_content._execute_refresh((), {}, instance=dialog_content.instance)
+        should_open = (
+            page.tab != "Roster"
+            or (page.editor is not None and page.editor[0] == "cell")
+            or (page.pending is not None and page.pending["kind"] == "generation")
+        )
+        if should_open and not dialog.value:
+            dialog.open()
+        elif not should_open and dialog.value:
+            dialog.close()
 
     page.refresh = refresh_now
     content()
+    with dialog:
+        dialog_content()
     ui.timer(0.01, page.bootstrap, once=True)
 
 

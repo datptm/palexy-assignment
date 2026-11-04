@@ -2,7 +2,7 @@
 
 from src.domain.limits import MAX_INTEGER
 from src.domain.periods import WEEKDAYS
-from src.model.scheduling import SchedulingError, Violation
+from src.model.scheduling import GenerationShortfall, SchedulingError, ShiftDefinition, Violation
 
 
 def hour_range(start: int, end: int) -> str:
@@ -13,6 +13,19 @@ def hour_range(start: int, end: int) -> str:
 def person_label(name: str, person_id: int) -> str:
     """Keep duplicate names distinguishable by a stable identifier."""
     return f"{name} #{person_id}"
+
+
+def shortfall_location(
+    shortfall: GenerationShortfall, shifts_by_id: dict[int, ShiftDefinition]
+) -> str:
+    """Format a shortage's day and available hour or shift reference."""
+    location = WEEKDAYS[shortfall.day]
+    if shortfall.hour is not None:
+        return f"{location} {shortfall.hour:02d}:00"
+    if shortfall.shift_id is not None:
+        shift = shifts_by_id[shortfall.shift_id]
+        return f"{location} {hour_range(shift.start_hour, shift.end_hour)}"
+    return location
 
 
 def whole_number(value: object, field: str, *, minimum: int = 0) -> int:

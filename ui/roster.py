@@ -5,11 +5,18 @@ from functools import partial
 from nicegui import ui
 
 from src.domain.periods import WEEKDAYS
-from src.model.scheduling import GenerationDiagnostics, ShiftDefinition
+from src.model.scheduling import (
+    AssignmentOptionPreview,
+    AssignmentOptionsPreview,
+    Employee,
+    GenerationDiagnostics,
+    ShiftDefinition,
+)
 from ui.analysis_panel import render_coverage_chart
 from ui.demand_panel import render_threshold
-from ui.presentation import finding_text, hour_range, person_label, ratio
+from ui.presentation import finding_text, hour_range, person_label, ratio, shortfall_location
 from ui.session import PageSession
+from ui.tables import render_data_table
 
 
 def render_roster(page: PageSession) -> None:
@@ -152,31 +159,37 @@ def render_roster(page: PageSession) -> None:
                                         remove_button.tooltip(
                                             f"Remove assignment for {person.name}"
                                         ).mark(f"remove-assignment-{assignment.id}")
-                                    ui.label(
-                                        f"{person.assigned_hours} / {person.maximum_hours} h"
-                                    ).classes("schedule-capacity-meta")
                             else:
                                 ui.label("Unassigned").classes("schedule-empty")
+
+    with ui.card().classes("schedule-card gap-3 w-full"):
+        render_coverage_chart(page)
+
+
+def render_roster_dialog(page: PageSession) -> None:
+    """Render the active roster review inside the page's stable dialog."""
     if page.editor and page.editor[0] == "cell":
-        editor = ui.dialog().props("persistent")
-        with editor, ui.card().classes("schedule-card schedule-workspace-dialog gap-2"):
+        with ui.card().classes(
+            "schedule-card schedule-workspace-dialog schedule-assignment-dialog"
+        ):
             with ui.row().classes("schedule-header-row justify-between"):
-                ui.label("Edit assignment").classes("schedule-card-title")
+                with ui.column().classes("gap-0"):
+                    ui.label("Edit assignment").classes("schedule-workspace-title")
+                    _, day, shift_id, _, _, _ = page.editor
+                    shift = next(item for item in page.result.state.shifts if item.id == shift_id)
+                    ui.label(
+                        f"Edit {WEEKDAYS[day]} {hour_range(shift.start_hour, shift.end_hour)}"
+                    ).classes("schedule-workspace-subtitle")
                 ui.button(
                     "Close",
                     icon="close",
                     on_click=lambda: _close_editor(page),
                 ).props("flat")
             _assignment_editor(page)
-        editor.open()
     elif page.pending and page.pending["kind"] == "generation":
-        confirmation = ui.dialog().props("persistent")
-        with confirmation, ui.card().classes("schedule-card schedule-workspace-dialog gap-2"):
+        with ui.card().classes("schedule-card schedule-workspace-dialog gap-2"):
             ui.label("Review regenerated roster").classes("schedule-card-title")
             _replacement(page)
-        confirmation.open()
-    with ui.card().classes("schedule-card gap-3 w-full"):
-        render_coverage_chart(page)
 
 
 def _metric_card(title: str, value: str, detail: str, tone: str = "") -> None:
@@ -204,7 +217,6 @@ def _assignment_editor(page) -> None:
     _, day, shift_id, preview, selected_id, replacing_id = page.editor
     state = page.result.state
     shift = next(item for item in state.shifts if item.id == shift_id)
-    ui.label(f"Edit {WEEKDAYS[day]} {hour_range(shift.start_hour, shift.end_hour)}")
     current = tuple(
         item for item in state.assignments if item.day == day and item.shift_id == shift_id
     )
@@ -212,111 +224,213 @@ def _assignment_editor(page) -> None:
         original = next(item for item in state.assignments if item.id == replacing_id)
         original_shift = next(item for item in state.shifts if item.id == original.shift_id)
         original_person = next(item for item in state.employees if item.id == original.employee_id)
-        ui.label(
-            f"Moving {person_label(original_person.name, original_person.id)} from "
-            f"{WEEKDAYS[original.day]} "
-            f"{hour_range(original_shift.start_hour, original_shift.end_hour)}"
-        )
-        ui.label("Choose a destination day and shift, then an employee")
-        with ui.element("div").classes("max-h-36 overflow-auto"):
-            for destination_day, day_name in enumerate(WEEKDAYS):
-                for destination_shift in state.shifts:
+        with ui.element("div").classes("schedule-assignment-moving"):
+            ui.label("Moving assignment").classes("schedule-workspace-card-title")
+            ui.label(
+                f"{person_label(original_person.name, original_person.id)} from "
+                f"{WEEKDAYS[original.day]} "
+                f"{hour_range(original_shift.start_hour, original_shift.end_hour)}"
+            )
+        _destination_picker(page, state.shifts, day, shift_id, replacing_id)
+
+    with ui.card().classes("schedule-workspace-card schedule-assignment-section"):
+        with ui.row().classes("schedule-header-row justify-between"):
+            ui.label("Current assignments").classes("schedule-workspace-card-title")
+            ui.label(f"{len(current)} assigned").classes("schedule-status")
+        if not current:
+            ui.label("No one assigned to this shift").classes("schedule-capacity-meta")
+        for assignment in current:
+            person = next(item for item in state.employees if item.id == assignment.employee_id)
+            with ui.row().classes("schedule-assignment-person-row"):
+                ui.label(person_label(person.name, person.id)).classes("font-semibold")
+                with ui.row().classes("schedule-workspace-row-actions"):
                     ui.button(
-                        f"Destination {day_name} "
-                        f"{hour_range(destination_shift.start_hour, destination_shift.end_hour)}",
+                        "Reassign",
+                        on_click=partial(_start_reassign, page, day, shift_id, assignment.id),
+                    ).props("flat dense")
+                    ui.button(
+                        "Remove assignment",
                         on_click=partial(
-                            _choose_destination,
-                            page,
-                            destination_day,
-                            destination_shift.id,
-                            replacing_id,
+                            page.act, page.service.remove_assignment, state.id, assignment.id
                         ),
-                    )
-    for assignment in current:
-        person = next(item for item in state.employees if item.id == assignment.employee_id)
-        ui.label(person_label(person.name, person.id))
-        ui.button(
-            "Remove assignment",
-            on_click=partial(page.act, page.service.remove_assignment, state.id, assignment.id),
-        )
-        ui.button(
-            "Reassign",
-            on_click=partial(_start_reassign, page, day, shift_id, assignment.id),
-        )
-    names = [item.name for item in state.employees]
-    for option in preview.options:
-        person = next(item for item in state.employees if item.id == option.employee_id)
+                    ).props("flat dense color=negative")
+
+    with ui.element("div").classes("schedule-assignment-grid"):
+        with ui.card().classes("schedule-workspace-card schedule-assignment-section"):
+            ui.label("Choose an employee").classes("schedule-workspace-card-title")
+            ui.label("Select a person to review their eligibility and hours.").classes(
+                "schedule-capacity-meta"
+            )
+            with ui.element("div").classes("schedule-assignment-choices"):
+                _employee_choices(page, state.employees, preview.options, selected_id)
+        with ui.card().classes("schedule-workspace-card schedule-assignment-section"):
+            if selected_id is None:
+                ui.label("Review impact").classes("schedule-workspace-card-title")
+                ui.label("Select a person to review the impact").classes("schedule-capacity-meta")
+            else:
+                option = next(item for item in preview.options if item.employee_id == selected_id)
+                person = next(item for item in state.employees if item.id == selected_id)
+                _assignment_impact(
+                    page, state.id, day, shift, preview, option, person, replacing_id
+                )
+
+
+def _destination_picker(
+    page: PageSession,
+    shifts: tuple[ShiftDefinition, ...],
+    day: int,
+    shift_id: int,
+    replacing_id: int,
+) -> None:
+    with ui.card().classes("schedule-workspace-card schedule-assignment-section"):
+        ui.label("Choose destination").classes("schedule-workspace-card-title")
+        with ui.element("div").classes("schedule-assignment-destinations"):
+            for destination_day, day_name in enumerate(WEEKDAYS):
+                with ui.row().classes("schedule-assignment-destination-row"):
+                    ui.label(day_name).classes("schedule-assignment-day")
+                    with ui.row().classes("schedule-workspace-row-actions"):
+                        for destination_shift in shifts:
+                            button = ui.button(
+                                f"Destination {day_name} "
+                                f"{hour_range(destination_shift.start_hour, destination_shift.end_hour)}",
+                                on_click=partial(
+                                    _choose_destination,
+                                    page,
+                                    destination_day,
+                                    destination_shift.id,
+                                    replacing_id,
+                                ),
+                            )
+                            button.props(
+                                "unelevated"
+                                if (destination_day, destination_shift.id) == (day, shift_id)
+                                else "outline"
+                            )
+
+
+def _employee_choices(
+    page: PageSession,
+    employees: tuple[Employee, ...],
+    options: tuple[AssignmentOptionPreview, ...],
+    selected_id: int | None,
+) -> None:
+    if not options:
+        ui.label("Add staff before assigning this shift").classes("schedule-capacity-meta")
+        return
+    names = [item.name for item in employees]
+    for option in options:
+        person = next(item for item in employees if item.id == option.employee_id)
         label = (
             person_label(person.name, person.id) if names.count(person.name) > 1 else person.name
         )
-        choice_button = ui.button(
-            label,
-            on_click=partial(_choose, page, person.id),
+        selected_class = " schedule-assignment-choice--selected" if selected_id == person.id else ""
+        with ui.element("div").classes(f"schedule-assignment-choice{selected_class}"):
+            with ui.row().classes("schedule-header-row justify-between"):
+                choice_button = ui.button(label, on_click=partial(_choose, page, person.id)).props(
+                    "flat dense"
+                )
+                choice_button.props["aria-pressed"] = selected_id == person.id
+                ui.label("Unavailable" if option.blocked else "Available").classes(
+                    "schedule-capacity-meta" if option.blocked else "schedule-status"
+                )
+            ui.label(f"{option.current_hours} / {option.weekly_max_hours} h weekly").classes(
+                "schedule-capacity-meta"
+            )
+            if option.blocked:
+                choice_button.disable()
+                with ui.element("ul").classes("schedule-review-list schedule-assignment-reasons"):
+                    for finding in option.findings:
+                        with ui.element("li"):
+                            ui.label(finding_text(finding))
+
+
+def _assignment_impact(
+    page: PageSession,
+    schedule_id: int,
+    day: int,
+    shift: ShiftDefinition,
+    preview: AssignmentOptionsPreview,
+    option: AssignmentOptionPreview,
+    person: Employee,
+    replacing_id: int | None,
+) -> None:
+    ui.label("Review impact").classes("schedule-workspace-card-title")
+    ui.label(person_label(person.name, person.id)).classes("schedule-capacity-meta")
+    rows = [
+        (
+            "Weekly hours",
+            f"{option.current_hours} h",
+            f"{option.projected_hours} h",
+            f"{option.weekly_max_hours} h",
+        ),
+        (
+            "Daily shifts",
+            str(option.current_daily_shift_count),
+            str(option.projected_daily_shift_count),
+            str(option.daily_shift_limit),
+        ),
+    ]
+    if option.after_weekly is not None and option.before_weekly.covered_staff_hours is not None:
+        rows.append(
+            (
+                "Covered staff-hours",
+                str(option.before_weekly.covered_staff_hours),
+                str(option.after_weekly.covered_staff_hours),
+                "—",
+            )
         )
-        if option.blocked:
-            choice_button.disable()
-            ui.label("Blocked: " + "; ".join(finding_text(f) for f in option.findings))
-    if selected_id is not None:
-        option = next(item for item in preview.options if item.employee_id == selected_id)
-        if replacing_id is None:
-            ui.label(
-                f"{option.current_hours} + {shift.end_hour - shift.start_hour} = "
-                f"{option.projected_hours} h; limit {option.weekly_max_hours} h"
-            )
-        else:
-            ui.label(
-                f"{option.current_hours} → {option.projected_hours} h; "
-                f"limit {option.weekly_max_hours} h"
-            )
-        ui.label(
-            f"Daily shifts: {option.current_daily_shift_count} → "
-            f"{option.projected_daily_shift_count}; limit {option.daily_shift_limit}"
+    render_data_table(("Measure", "Before", "After", "Limit"), rows)
+    if option.after_weekly is not None and option.before_weekly.covered_staff_hours is None:
+        ui.label("Demand unavailable; coverage cannot be projected").classes(
+            "schedule-capacity-meta"
         )
-        if option.after_weekly is not None and option.before_weekly.covered_staff_hours is not None:
-            ui.label(
-                f"Covered staff-hours: {option.before_weekly.covered_staff_hours} → "
-                f"{option.after_weekly.covered_staff_hours}"
-            )
-        elif option.after_weekly is not None:
-            ui.label("Demand unavailable; coverage cannot be projected")
-        if option.after_hourly is not None and option.before_weekly.covered_staff_hours is not None:
-            with ui.element("div").classes("max-h-36 overflow-auto"):
-                for before_hour, after_hour in zip(
-                    option.before_hourly, option.after_hourly, strict=True
-                ):
-                    ui.label(
-                        f"{WEEKDAYS[before_hour.day]} {before_hour.hour:02d}:00: "
-                        f"{before_hour.scheduled} → {after_hour.scheduled} scheduled, "
-                        f"{before_hour.covered} → {after_hour.covered} covered"
+    if option.after_hourly is not None and option.before_weekly.covered_staff_hours is not None:
+        with ui.expansion("Hourly coverage changes").classes("w-full"):
+            render_data_table(
+                ("Day", "Hour", "Before", "After", "Covered before", "Covered after"),
+                (
+                    (
+                        WEEKDAYS[before.day],
+                        f"{before.hour:02d}:00",
+                        str(before.scheduled),
+                        str(after.scheduled),
+                        str(before.covered),
+                        str(after.covered),
                     )
-        for finding in option.findings:
-            ui.label(finding_text(finding))
-        if not option.blocked:
-            if replacing_id is None:
-                ui.button(
-                    "Add assignment",
-                    on_click=lambda: page.act(
-                        page.service.add_assignment,
-                        state.id,
-                        selected_id,
-                        day,
-                        shift_id,
-                        expected_version=preview.baseline_version,
-                    ),
-                )
-            else:
-                ui.button(
-                    "Save reassignment",
-                    on_click=lambda: page.act(
-                        page.service.reassign_assignment,
-                        state.id,
-                        replacing_id,
-                        selected_id,
-                        day,
-                        shift_id,
-                        expected_version=preview.baseline_version,
-                    ),
-                )
+                    for before, after in zip(option.before_hourly, option.after_hourly, strict=True)
+                    if before.scheduled != after.scheduled or before.covered != after.covered
+                ),
+            )
+    if option.findings:
+        with ui.element("ul").classes("schedule-review-list schedule-assignment-reasons"):
+            for finding in option.findings:
+                with ui.element("li"):
+                    ui.label(finding_text(finding))
+    if replacing_id is None:
+        ui.button(
+            "Add assignment",
+            on_click=lambda: page.act(
+                page.service.add_assignment,
+                schedule_id,
+                option.employee_id,
+                day,
+                shift.id,
+                expected_version=preview.baseline_version,
+            ),
+        ).props("unelevated").classes("schedule-assignment-primary")
+    else:
+        ui.button(
+            "Save reassignment",
+            on_click=lambda: page.act(
+                page.service.reassign_assignment,
+                schedule_id,
+                replacing_id,
+                option.employee_id,
+                day,
+                shift.id,
+                expected_version=preview.baseline_version,
+            ),
+        ).props("unelevated").classes("schedule-assignment-primary")
 
 
 def _choose(page, employee_id: int) -> None:
@@ -356,15 +470,20 @@ def _replacement(page) -> None:
         ui.label(f"Proposed coverage: {ratio(preview.draft.weekly.coverage_rate * 100)}%")
     if preview.draft.generation_diagnostics is not None:
         _generation_diagnostics(preview.draft.generation_diagnostics, preview.draft.state.shifts)
-    with ui.element("div").classes("max-h-44 overflow-auto"):
-        for slot in preview.draft.roster:
-            if slot.employees:
-                ui.label(
-                    f"{WEEKDAYS[slot.day]} {hour_range(slot.start_hour, slot.end_hour)}: "
-                    + ", ".join(
-                        person_label(person.name, person.employee_id) for person in slot.employees
-                    )
-                )
+    render_data_table(
+        ("Day", "Shift", "Assigned staff"),
+        (
+            (
+                WEEKDAYS[slot.day],
+                hour_range(slot.start_hour, slot.end_hour),
+                ", ".join(
+                    person_label(person.name, person.employee_id) for person in slot.employees
+                ),
+            )
+            for slot in preview.draft.roster
+            if slot.employees
+        ),
+    )
     ui.button(
         "Confirm replacement",
         on_click=lambda: page.act(
@@ -386,35 +505,53 @@ def _generation_diagnostics(
     shifts_by_id = {shift.id: shift for shift in shifts}
     with ui.card().classes("schedule-workspace-card"):
         ui.label("Generation diagnostics").classes("schedule-workspace-card-title")
-        ui.label("Unavoidable shortage lower bound")
-        ui.label(diagnostics.lower_bound_message)
-        ui.label(
-            f"Optimizer cost: C={diagnostics.primary_cost}; "
-            f"fairness F={diagnostics.fairness_cost}; "
-            f"deviation {diagnostics.fairness_deviation_hours:.2f} h"
+        render_data_table(
+            ("Measure", "Value"),
+            (
+                ("Unavoidable shortage lower bound", diagnostics.lower_bound_message),
+                ("Optimizer cost", f"C={diagnostics.primary_cost}"),
+                ("Fairness cost F", str(diagnostics.fairness_cost)),
+                ("Fairness deviation", f"{diagnostics.fairness_deviation_hours:.2f} h"),
+            ),
         )
-        ui.label("Linear coverage metrics")
-        for shortfall in diagnostics.shortfalls:
-            location = WEEKDAYS[shortfall.day]
-            if shortfall.hour is not None:
-                location += f" {shortfall.hour:02d}:00"
-            elif shortfall.shift_id is not None:
-                shift = shifts_by_id[shortfall.shift_id]
-                location += f" {hour_range(shift.start_hour, shift.end_hour)}"
-            ui.label(
-                f"{shortfall.reason}: {location}, {shortfall.unmet_staff_hours} "
-                f"unmet staff-hours. {shortfall.message}"
+        ui.label("Linear coverage metrics").classes("schedule-capacity-meta")
+        if diagnostics.shortfalls:
+            ui.label("Shortfalls").classes("schedule-workspace-card-title")
+            render_data_table(
+                ("Reason", "When", "Unmet hours", "Explanation"),
+                (
+                    (
+                        shortfall.reason,
+                        shortfall_location(shortfall, shifts_by_id),
+                        str(shortfall.unmet_staff_hours),
+                        shortfall.message,
+                    )
+                    for shortfall in diagnostics.shortfalls
+                ),
             )
         flag_messages = dict(diagnostics.flag_messages)
-        for flag in diagnostics.flags:
-            message = flag_messages.get(flag)
-            ui.label(f"{flag}: {message}" if message else flag)
+        if diagnostics.flags:
+            ui.label("Flags").classes("schedule-workspace-card-title")
+            with ui.element("ul").classes("schedule-review-list"):
+                for flag in diagnostics.flags:
+                    message = flag_messages.get(flag)
+                    with ui.element("li"):
+                        ui.label(f"{flag}: {message}" if message else flag)
         if diagnostics.trace:
             with ui.expansion("Generation decision trace"):
-                for step in diagnostics.trace:
-                    ui.label(
-                        f"{step.sequence}. {step.action} employee {step.employee_id}, "
-                        f"{WEEKDAYS[step.day]} shift {step.shift_id}: "
-                        f"delta C {step.delta_cost}, delta F {step.delta_fairness}. "
-                        f"{step.explanation}"
-                    )
+                render_data_table(
+                    ("Step", "Action", "Employee", "Day", "Shift", "Δ cost", "Δ fairness", "Why"),
+                    (
+                        (
+                            str(step.sequence),
+                            step.action,
+                            str(step.employee_id),
+                            WEEKDAYS[step.day],
+                            str(step.shift_id),
+                            str(step.delta_cost),
+                            str(step.delta_fairness),
+                            step.explanation,
+                        )
+                        for step in diagnostics.trace
+                    ),
+                )

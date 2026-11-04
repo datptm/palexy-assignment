@@ -88,3 +88,12 @@
 - Why: FR-4.2 requires construction closure before FR-5.3's refinement move limit; the old shared trace count could leave avoidable unmet demand.
 - Verification: Regression test failed before the fix with only one of two days assigned. Focused v2 tests: 46 passed. Full pytest outside the sandbox: 186 passed, 3 opt-in benchmarks skipped. Ruff lint, Ruff format, compileall, and `git diff --check` passed. Opt-in benchmarks were not rerun for this focused change.
 - Risks / follow-ups: The Stage 6 summary retains historical audit statuses for other items; no new full requirement audit or live browser walkthrough was performed.
+
+## 2026-11-04 06:10 (UTC) - Simplify roster and assignment dialogs
+
+- Task: Remove calendar hour tags, prevent dialog re-popup, organize dense UI text, and redesign Edit Assignment.
+- Changes: Removed repeated employee hour totals from calendar cells; kept one dialog mounted through workspace and roster interactions; presented demand, generation diagnostics, shift impact, and history data in labeled tables or bullet lists. Reorganized Edit Assignment into current assignments, employee eligibility, destination selection, and a before/after impact review with a compact hourly drilldown. Added UI regressions for dialog identity, compact cells, review headings, and assignment editor states.
+- Files: `README.md`, `ui/app.py`, `ui/roster.py`, `ui/demand_panel.py`, `ui/history_panel.py`, `ui/shift_panel.py`, `ui/presentation.py`, `ui/tables.py`, `tests/test_ui_presentation.py`, `tests/test_ui_workflows.py`, `docs/ai/CHANGELOG.md`
+- Why: Keep the roster readable, prevent workspace refreshes from recreating an open dialog, and make assignment decisions and detailed reviews easier to scan.
+- Verification: `.venv/Scripts/python.exe -m pytest -q --tb=short`: 191 passed, 3 opt-in benchmarks skipped. `.venv/Scripts/python.exe -m ruff check .`, `.venv/Scripts/python.exe -m ruff format --check .`, `.venv/Scripts/python.exe -m compileall -q src ui tests main.py`, and `git diff --check`: passed. Focused dialog and assignment editor tests failed before their respective fixes and passed afterward.
+- Risks / follow-ups: No live browser visual walkthrough was performed; the automated NiceGUI interaction tests cover dialog state and content.

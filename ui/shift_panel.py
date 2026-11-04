@@ -8,6 +8,7 @@ from src.domain.periods import WEEKDAYS
 from src.model.scheduling import SchedulingError
 from ui.presentation import finding_text, hour_range, whole_number
 from ui.session import PageSession
+from ui.tables import render_data_table
 
 
 def render_shifts(page: PageSession) -> None:
@@ -77,35 +78,51 @@ def render_shifts(page: PageSession) -> None:
                         f"{len(preview.affected_assignment_ids)} assignment affected · "
                         f"{preview.old_duration} → {preview.new_duration} hours"
                     )
-                    for employee_id, day in preview.affected_employee_days:
-                        person = next(item for item in state.employees if item.id == employee_id)
-                        ui.label(f"{person.name} #{employee_id} · {WEEKDAYS[day]}")
-                    for finding in preview.findings:
-                        ui.label(finding_text(finding))
+                    if preview.affected_employee_days:
+                        employees = {person.id: person for person in state.employees}
+                        render_data_table(
+                            ("Affected employee", "Day"),
+                            (
+                                (f"{employees[employee_id].name} #{employee_id}", WEEKDAYS[day])
+                                for employee_id, day in preview.affected_employee_days
+                            ),
+                        )
+                    if preview.findings:
+                        with ui.element("ul").classes("schedule-review-list"):
+                            for finding in preview.findings:
+                                with ui.element("li"):
+                                    ui.label(finding_text(finding))
                     if preview.projected_result is not None:
                         projected = preview.projected_result
-                        ui.label(
-                            f"Scheduled staff-hours: "
-                            f"{page.result.weekly.scheduled_staff_hours} → "
-                            f"{projected.weekly.scheduled_staff_hours}"
-                        )
+                        impact = [
+                            (
+                                "Scheduled staff-hours",
+                                str(page.result.weekly.scheduled_staff_hours),
+                                str(projected.weekly.scheduled_staff_hours),
+                            )
+                        ]
                         if page.result.weekly.covered_staff_hours is not None:
-                            ui.label(
-                                f"Covered staff-hours: "
-                                f"{page.result.weekly.covered_staff_hours} → "
-                                f"{projected.weekly.covered_staff_hours}"
-                            )
-                        for metric in projected.employees:
-                            current = next(
-                                item
-                                for item in page.result.employees
-                                if item.employee_id == metric.employee_id
-                            )
-                            if metric.assigned_hours != current.assigned_hours:
-                                ui.label(
-                                    f"{metric.name} #{metric.employee_id}: "
-                                    f"{current.assigned_hours} → {metric.assigned_hours} h"
+                            impact.append(
+                                (
+                                    "Covered staff-hours",
+                                    str(page.result.weekly.covered_staff_hours),
+                                    str(projected.weekly.covered_staff_hours),
                                 )
+                            )
+                        current_employees = {
+                            item.employee_id: item for item in page.result.employees
+                        }
+                        impact.extend(
+                            (
+                                f"{metric.name} #{metric.employee_id} hours",
+                                str(current_employees[metric.employee_id].assigned_hours),
+                                str(metric.assigned_hours),
+                            )
+                            for metric in projected.employees
+                            if metric.assigned_hours
+                            != current_employees[metric.employee_id].assigned_hours
+                        )
+                        render_data_table(("Measure", "Current", "Projected"), impact)
 
                         async def save_shift() -> None:
                             if start.value != str(preview.new_start_hour) or end.value != str(

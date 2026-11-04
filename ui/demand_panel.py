@@ -4,8 +4,16 @@ from nicegui import ui
 
 from src.domain.periods import WEEKDAYS
 from src.model.scheduling import SchedulingError
-from ui.presentation import finding_text, hour_range, person_label, ratio, whole_number
+from ui.presentation import (
+    finding_text,
+    hour_range,
+    person_label,
+    ratio,
+    shortfall_location,
+    whole_number,
+)
 from ui.session import PageSession
+from ui.tables import render_data_table
 
 MAX_UPLOAD_BYTES = 1024 * 1024
 
@@ -112,11 +120,13 @@ def render_demand(page: PageSession) -> None:
             with ui.row().classes("schedule-header-row justify-between"):
                 ui.label("Demand Preview").classes("schedule-workspace-card-title")
                 ui.label(f"{len(parsed.cells)} hourly rows validated").classes("schedule-status")
-            with ui.element("div").classes("schedule-demand-table max-h-56"):
-                for cell in parsed.cells:
-                    ui.label(
-                        f"{WEEKDAYS[cell.day]} {cell.hour:02d}:00: {cell.transactions}"
-                    ).classes("schedule-demand-row")
+            render_data_table(
+                ("Day", "Hour", "Transactions"),
+                (
+                    (WEEKDAYS[cell.day], f"{cell.hour:02d}:00", str(cell.transactions))
+                    for cell in parsed.cells
+                ),
+            )
             for finding in parsed.findings:
                 ui.label(finding_text(finding)).classes(
                     "schedule-alert schedule-alert--warning"
@@ -152,11 +162,13 @@ def render_demand(page: PageSession) -> None:
             with ui.row().classes("schedule-header-row justify-between"):
                 ui.label("Current Demand").classes("schedule-workspace-card-title")
                 ui.label(f"{len(state.demand)} hourly rows").classes("schedule-status")
-            with ui.element("div").classes("schedule-demand-table max-h-56"):
-                for cell in state.demand:
-                    ui.label(
-                        f"{WEEKDAYS[cell.day]} {cell.hour:02d}:00: {cell.transactions}"
-                    ).classes("schedule-demand-row")
+            render_data_table(
+                ("Day", "Hour", "Transactions"),
+                (
+                    (WEEKDAYS[cell.day], f"{cell.hour:02d}:00", str(cell.transactions))
+                    for cell in state.demand
+                ),
+            )
 
 
 def render_refresh(page: PageSession) -> None:
@@ -170,11 +182,13 @@ def render_refresh(page: PageSession) -> None:
             ui.label(f"Proposed threshold: {pending['threshold']}")
         else:
             ui.label("Proposed demand: 112 day/hour counts")
-            with ui.element("div").classes("schedule-demand-table max-h-44"):
-                for cell in preview.draft.state.demand:
-                    ui.label(
-                        f"{WEEKDAYS[cell.day]} {cell.hour:02d}:00: {cell.transactions}"
-                    ).classes("schedule-demand-row")
+            render_data_table(
+                ("Day", "Hour", "Transactions"),
+                (
+                    (WEEKDAYS[cell.day], f"{cell.hour:02d}:00", str(cell.transactions))
+                    for cell in preview.draft.state.demand
+                ),
+            )
         ui.label(
             f"This replaces all assignments, including manual edits, and saves the prior "
             f"state in read-only history. {preview.removed_assignments} current; "
@@ -187,35 +201,45 @@ def render_refresh(page: PageSession) -> None:
         if diagnostics is not None:
             shifts_by_id = {shift.id: shift for shift in preview.draft.state.shifts}
             ui.label("Generation diagnostics").classes("schedule-workspace-card-title")
-            ui.label("Unavoidable shortage lower bound")
-            ui.label(diagnostics.lower_bound_message)
-            ui.label(
-                f"Optimizer cost: C={diagnostics.primary_cost}; "
-                f"fairness F={diagnostics.fairness_cost}"
+            render_data_table(
+                ("Measure", "Value"),
+                (
+                    ("Unavoidable shortage lower bound", diagnostics.lower_bound_message),
+                    ("Optimizer cost", f"C={diagnostics.primary_cost}"),
+                    ("Fairness cost", f"F={diagnostics.fairness_cost}"),
+                ),
             )
-            for shortfall in diagnostics.shortfalls:
-                location = WEEKDAYS[shortfall.day]
-                if shortfall.hour is not None:
-                    location += f" {shortfall.hour:02d}:00"
-                elif shortfall.shift_id is not None:
-                    shift = shifts_by_id[shortfall.shift_id]
-                    location += f" {hour_range(shift.start_hour, shift.end_hour)}"
-                ui.label(
-                    f"{shortfall.reason}: {location}, "
-                    f"{shortfall.unmet_staff_hours} unmet staff-hours"
-                )
-            for flag in diagnostics.flags:
-                ui.label(flag)
-        with ui.element("div").classes("max-h-44 overflow-auto"):
-            for slot in preview.draft.roster:
-                if slot.employees:
-                    ui.label(
-                        f"{WEEKDAYS[slot.day]} {hour_range(slot.start_hour, slot.end_hour)}: "
-                        + ", ".join(
-                            person_label(person.name, person.employee_id)
-                            for person in slot.employees
+            if diagnostics.shortfalls:
+                render_data_table(
+                    ("Reason", "When", "Unmet hours"),
+                    (
+                        (
+                            shortfall.reason,
+                            shortfall_location(shortfall, shifts_by_id),
+                            str(shortfall.unmet_staff_hours),
                         )
-                    )
+                        for shortfall in diagnostics.shortfalls
+                    ),
+                )
+            if diagnostics.flags:
+                with ui.element("ul").classes("schedule-review-list"):
+                    for flag in diagnostics.flags:
+                        with ui.element("li"):
+                            ui.label(flag)
+        render_data_table(
+            ("Day", "Shift", "Assigned staff"),
+            (
+                (
+                    WEEKDAYS[slot.day],
+                    hour_range(slot.start_hour, slot.end_hour),
+                    ", ".join(
+                        person_label(person.name, person.employee_id) for person in slot.employees
+                    ),
+                )
+                for slot in preview.draft.roster
+                if slot.employees
+            ),
+        )
 
     async def confirm() -> None:
         if page.pending is not pending or pending["schedule_id"] != page.schedule_id:

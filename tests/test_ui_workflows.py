@@ -156,7 +156,8 @@ async def test_assignment_add_or_remove_updates_hours_without_reload(tmp_path, m
         assert len(user.find(ui.dialog).elements) == 1
         user.find("Alex").click()
         user.find("Add assignment").click()
-        await user.should_see("8 / 8 h")
+        await user.should_see("Saved")
+        await user.should_see("Alex #1")
         assignment_id = service.get_schedule(ids[0]).state.assignments[0].id
         assert len(service.get_schedule(ids[0]).state.assignments) == 1
 
@@ -244,7 +245,8 @@ async def test_import_valid_report_shows_findings_then_commits_without_roster(
         user.find("Demand import").click()
         upload = next(iter(user.find(ui.upload).elements))
         await upload.handle_uploads([SmallFileUpload("report.csv", "text/csv", csv_bytes)])
-        await user.should_see("Friday 07:00: 22")
+        await user.should_see("Transactions")
+        await user.should_see("22")
         await user.should_see("warning")
         assert service.get_schedule(ids[0]).state.demand is None
 
@@ -448,6 +450,7 @@ async def test_reassignment_moves_to_selected_destination_atomically(tmp_path, m
         user.find("Bea").click()
         user.find("Save reassignment").click()
 
+        await user.should_see("Saved")
         await user.should_see("Bea #2")
         saved = service.get_schedule(ids[0]).state.assignments
         assert len(saved) == 1

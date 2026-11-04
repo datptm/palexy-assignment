@@ -85,6 +85,114 @@ async def test_staff_workspace_opens_in_dialog_instead_of_below_chart(
 
 
 @sync_test
+async def test_workspace_dialog_stays_mounted_during_form_interactions(
+    tmp_path, monkeypatch
+) -> None:
+    """Editing within an open workspace must not recreate its dialog."""
+
+    def seed(service):
+        schedule_id = service.create_schedule("Week").id
+        service.add_employee(schedule_id, "Alex", 8)
+
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, _):
+        user.find("Staff").click()
+        dialog = next(iter(user.find(ui.dialog).elements))
+        user.find("Alex #1").click()
+        await user.should_see("Edit Employee")
+        assert next(iter(user.find(ui.dialog).elements)) is dialog
+        user.find("Close").click()
+        await user.should_not_see("Edit Employee")
+
+
+@sync_test
+async def test_roster_cell_hides_repeated_capacity_and_keeps_editor_mounted(
+    tmp_path, monkeypatch
+) -> None:
+    """The calendar stays compact while choices update the existing editor."""
+
+    def seed(service):
+        schedule_id = service.create_schedule("Week").id
+        service.add_employee(schedule_id, "Alex", 16)
+        state = service.get_schedule(schedule_id).state
+        service.add_assignment(schedule_id, state.employees[0].id, 0, state.shifts[0].id)
+
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, _):
+        await user.should_not_see("8 / 16 h")
+        user.find("Tuesday 07:00–15:00").click()
+        dialog = next(iter(user.find(ui.dialog).elements))
+        user.find("Alex").click()
+        await user.should_see("Edit Tuesday 07:00–15:00")
+        assert next(iter(user.find(ui.dialog).elements)) is dialog
+
+
+@sync_test
+async def test_demand_and_assignment_reviews_use_labeled_tables(tmp_path, monkeypatch) -> None:
+    """Dense day/hour and preview figures have columns a manager can scan."""
+
+    def seed(service):
+        schedule_id = service.create_schedule("Week").id
+        service.import_initial(schedule_id, week_csv())
+        service.add_employee(schedule_id, "Alex", 8)
+
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, _):
+        user.find("Demand import").click()
+        await user.should_see("Transactions")
+        user.find("Close").click()
+        user.find("Monday 07:00–15:00").click()
+        user.find("Alex").click()
+        await user.should_see("Before")
+        await user.should_see("After")
+        await user.should_see("Scheduled")
+
+
+@sync_test
+async def test_assignment_editor_guides_selection_and_impact_review(tmp_path, monkeypatch) -> None:
+    """An empty cell separates the current roster, choices, and proposed impact."""
+
+    def seed(service):
+        schedule_id = service.create_schedule("Week").id
+        service.import_initial(schedule_id, week_csv())
+        service.add_employee(schedule_id, "Alex", 8)
+
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, _):
+        user.find("Monday 07:00–15:00").click()
+        await user.should_see("Current assignments")
+        await user.should_see("No one assigned to this shift")
+        await user.should_see("Choose an employee")
+        await user.should_see("Select a person to review the impact")
+        user.find("Alex").click()
+        await user.should_see("Review impact")
+        await user.should_see("Weekly hours")
+        await user.should_see("Daily shifts")
+        await user.should_see("Add assignment")
+
+
+@sync_test
+async def test_reassignment_editor_separates_destination_and_employee_choice(
+    tmp_path, monkeypatch
+) -> None:
+    """A move shows its source and destination choices before save."""
+
+    def seed(service):
+        schedule_id = service.create_schedule("Week").id
+        for name in ("Alex", "Bea"):
+            service.add_employee(schedule_id, name, 16)
+        state = service.get_schedule(schedule_id).state
+        service.add_assignment(schedule_id, state.employees[0].id, 0, state.shifts[0].id)
+
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, _):
+        user.find("Monday 07:00–15:00").click()
+        user.find("Reassign").click()
+        await user.should_see("Moving assignment")
+        await user.should_see("Choose destination")
+        user.find("Destination Tuesday 15:00–23:00").click()
+        await user.should_see("Choose an employee")
+        user.find("Bea").click()
+        await user.should_see("Review impact")
+        await user.should_see("Save reassignment")
+
+
+@sync_test
 async def test_workspace_dialogs_follow_reference_screen_sections(tmp_path, monkeypatch) -> None:
     """Each workspace opens in the shared dialog shell with its designed heading."""
 
