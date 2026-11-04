@@ -1,10 +1,106 @@
 """Pure whole-state assignment checks."""
 
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 
 from src.domain.limits import checked_total
 from src.domain.shifts import overlaps, validate_shift_range
-from src.model.scheduling import ScheduleState, SchedulingError, Violation
+from src.model.scheduling import Assignment, ScheduleState, SchedulingError, Violation
+
+
+def _valid_assignment_references(
+    state: ScheduleState,
+    employee_id: int,
+    day: int,
+    shift_id: int,
+    *,
+    employee_ids: frozenset[int] | None = None,
+    shift_ids: frozenset[int] | None = None,
+    day_count: int = 7,
+) -> bool:
+    has_employee = (
+        employee_id in employee_ids
+        if employee_ids is not None
+        else any(employee.id == employee_id for employee in state.employees)
+    )
+    has_shift = (
+        shift_id in shift_ids
+        if shift_ids is not None
+        else any(shift.id == shift_id for shift in state.shifts)
+    )
+    return has_employee and has_shift and type(day) is int and 0 <= day < day_count
+
+
+def _assignment_is_duplicate(
+    key: tuple[int, int, int], existing: set[tuple[int, int, int]]
+) -> bool:
+    return key in existing
+
+
+def _overlaps_shift(left, right) -> bool:
+    return overlaps(left.start_hour, left.end_hour, right.start_hour, right.end_hour)
+
+
+def _exceeds_weekly_limit(assigned_hours: int, maximum: int) -> bool:
+    return assigned_hours > maximum
+
+
+def _exceeds_daily_limit(assigned_count: int, limit: int) -> bool:
+    return assigned_count > limit
+
+
+def can_place_assignment(
+    state: ScheduleState,
+    employee_id: int,
+    day: int,
+    shift_id: int,
+    *,
+    assignments: Sequence[Assignment] | None = None,
+) -> bool:
+    """Check all hard automatic-placement rules against a current roster."""
+    employee = next((item for item in state.employees if item.id == employee_id), None)
+    shift = next((item for item in state.shifts if item.id == shift_id), None)
+    if (
+        employee is None
+        or shift is None
+        or not _valid_assignment_references(state, employee_id, day, shift_id)
+    ):
+        return False
+    try:
+        validate_shift_range(shift.start_hour, shift.end_hour)
+    except SchedulingError:
+        return False
+    current = state.assignments if assignments is None else assignments
+    assigned_hours = 0
+    day_shifts = []
+    seen: set[tuple[int, int, int]] = set()
+    shifts = {item.id: item for item in state.shifts}
+    for assignment in current:
+        if not _valid_assignment_references(
+            state, assignment.employee_id, assignment.day, assignment.shift_id
+        ):
+            return False
+        key = (assignment.employee_id, assignment.day, assignment.shift_id)
+        if _assignment_is_duplicate(key, seen):
+            return False
+        seen.add(key)
+        if assignment.employee_id != employee_id:
+            continue
+        other_shift = shifts[assignment.shift_id]
+        assigned_hours += other_shift.end_hour - other_shift.start_hour
+        if assignment.day == day:
+            day_shifts.append(other_shift)
+            if _overlaps_shift(shift, other_shift):
+                return False
+    if _assignment_is_duplicate((employee_id, day, shift_id), seen):
+        return False
+    if _exceeds_weekly_limit(
+        assigned_hours + shift.end_hour - shift.start_hour, employee.weekly_max_hours
+    ):
+        return False
+    if _exceeds_daily_limit(len(day_shifts) + 1, state.daily_shift_limit):
+        return False
+    return True
 
 
 def validate_state(state: ScheduleState) -> tuple[Violation, ...]:
@@ -42,7 +138,13 @@ def validate_state(state: ScheduleState) -> tuple[Violation, ...]:
     for assignment in state.assignments:
         employee = employees.get(assignment.employee_id)
         shift = shifts.get(assignment.shift_id)
-        if employee is None or shift is None or not 0 <= assignment.day <= 6:
+        if (
+            employee is None
+            or shift is None
+            or not _valid_assignment_references(
+                state, assignment.employee_id, assignment.day, assignment.shift_id
+            )
+        ):
             findings.append(
                 Violation(
                     "UNKNOWN_REFERENCE",
@@ -53,7 +155,7 @@ def validate_state(state: ScheduleState) -> tuple[Violation, ...]:
             )
             continue
         key = (assignment.employee_id, assignment.day, assignment.shift_id)
-        if key in seen:
+        if _assignment_is_duplicate(key, seen):
             findings.append(
                 Violation(
                     "DUPLICATE_ASSIGNMENT",
@@ -66,9 +168,7 @@ def validate_state(state: ScheduleState) -> tuple[Violation, ...]:
         for other_assignment, other_shift in by_person_day[
             (assignment.employee_id, assignment.day)
         ]:
-            if overlaps(
-                shift.start_hour, shift.end_hour, other_shift.start_hour, other_shift.end_hour
-            ):
+            if _overlaps_shift(shift, other_shift):
                 findings.append(
                     Violation(
                         "SHIFT_OVERLAP",
@@ -86,7 +186,7 @@ def validate_state(state: ScheduleState) -> tuple[Violation, ...]:
         hours[employee.id] += shift.end_hour - shift.start_hour
     for employee in state.employees:
         assigned = checked_total(hours[employee.id], field="assigned_hours")
-        if assigned > employee.weekly_max_hours:
+        if _exceeds_weekly_limit(assigned, employee.weekly_max_hours):
             findings.append(
                 Violation(
                     "OVER_WEEKLY_MAX",
@@ -101,7 +201,7 @@ def validate_state(state: ScheduleState) -> tuple[Violation, ...]:
                 )
             )
     for (employee_id, day), assigned_shifts in by_person_day.items():
-        if len(assigned_shifts) > state.daily_shift_limit:
+        if _exceeds_daily_limit(len(assigned_shifts), state.daily_shift_limit):
             findings.append(
                 Violation(
                     "OVER_DAILY_SHIFT_LIMIT",

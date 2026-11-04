@@ -29,7 +29,7 @@ from src.db.scheduling import (
 )
 from src.domain.csv_import import parse_transactions_csv
 from src.domain.demand import validate_demand
-from src.domain.generation import generate_draft
+from src.domain.generation import generate_roster
 from src.domain.limits import bounded_int, bounded_name, checked_total
 from src.domain.metrics import calculate_result
 from src.domain.schedules import normalize_schedule_name
@@ -40,8 +40,10 @@ from src.model.scheduling import (
     Assignment,
     AssignmentOptionPreview,
     AssignmentOptionsPreview,
+    GenerationOutcome,
     Preview,
     ScheduleResult,
+    ScheduleState,
     SchedulingError,
     ShiftEditPreview,
 )
@@ -71,6 +73,26 @@ def _check_version(state, expected_version: int | None) -> None:
             "schedule changed; review the action again",
             {"expected_version": version, "current_version": state.version},
         )
+
+
+def _generated(state: ScheduleState) -> GenerationOutcome:
+    """Run pure generation and adapt prerequisite blocks to legacy service errors."""
+    outcome = generate_roster(state)
+    if outcome.blocked_code is not None:
+        legacy_codes = {
+            "NO_DEMAND": "MISSING_DEMAND",
+            "NO_SHIFTS": "MISSING_SHIFTS",
+            "NO_ELIGIBLE_STAFF": "NO_ELIGIBLE_EMPLOYEE",
+        }
+        code = legacy_codes.get(outcome.blocked_code)
+        if code is None:
+            raise SchedulingError(
+                "GENERATION_FAILED", "generation returned an unsupported blocked outcome"
+            )
+        raise SchedulingError(code, outcome.message)
+    if outcome.draft is None or outcome.diagnostics is None or outcome.draft_result is None:
+        raise SchedulingError("GENERATION_FAILED", "generation returned an incomplete outcome")
+    return outcome
 
 
 class ScheduleService:
@@ -497,23 +519,26 @@ class ScheduleService:
             state = load_state(db, schedule_id)
             if state.assignments:
                 raise SchedulingError("CONFIRMATION_REQUIRED", "preview roster replacement")
-            draft = generate_draft(state)
-            replace_assignments(db, schedule_id, draft.assignments)
+            outcome = _generated(state)
+            replace_assignments(db, schedule_id, outcome.draft.assignments)
             _bump(db, schedule_id)
-            return calculate_result(load_state(db, schedule_id))
+            return replace(
+                calculate_result(load_state(db, schedule_id)),
+                generation_diagnostics=outcome.diagnostics,
+            )
 
     def preview_generation(self, schedule_id: int) -> Preview:
         """Return read-only generated draft and signed baseline version."""
         schedule_id = valid_id(schedule_id, "schedule_id")
         with schedule_connection(self.database_path) as db:
             state = load_state(db, schedule_id)
-            draft = generate_draft(state)
+            outcome = _generated(state)
             return Preview(
                 issue_token(schedule_id, state.version, "generation", ""),
                 state.version,
-                calculate_result(draft),
+                outcome.draft_result,
                 len(state.assignments),
-                len(draft.assignments),
+                len(outcome.draft.assignments),
             )
 
     def confirm_generation(
@@ -528,9 +553,13 @@ class ScheduleService:
             state = load_state(db, schedule_id)
             if state.version != version:
                 raise SchedulingError("STALE_PREVIEW", "schedule changed since preview")
-            replace_assignments(db, schedule_id, generate_draft(state).assignments)
+            outcome = _generated(state)
+            replace_assignments(db, schedule_id, outcome.draft.assignments)
             _bump(db, schedule_id)
-            return calculate_result(load_state(db, schedule_id))
+            return replace(
+                calculate_result(load_state(db, schedule_id)),
+                generation_diagnostics=outcome.diagnostics,
+            )
 
     def _proposal(self, state, csv_bytes, threshold):
         if (csv_bytes is None) == (threshold is None):
@@ -561,13 +590,13 @@ class ScheduleService:
         with schedule_connection(self.database_path) as db:
             state = load_state(db, schedule_id)
             proposed, reason, digest = self._proposal(state, csv_bytes, threshold)
-            draft = generate_draft(proposed)
+            outcome = _generated(proposed)
             return Preview(
                 issue_token(schedule_id, state.version, reason, digest),
                 state.version,
-                calculate_result(draft),
+                outcome.draft_result,
                 len(state.assignments),
-                len(draft.assignments),
+                len(outcome.draft.assignments),
             )
 
     def confirm_refresh(
@@ -593,15 +622,18 @@ class ScheduleService:
             if state.version != version:
                 raise SchedulingError("STALE_PREVIEW", "schedule changed since preview")
             proposed, _, _ = self._proposal(state, csv_bytes, threshold)
-            draft = generate_draft(proposed)
+            outcome = _generated(proposed)
             append_snapshot(db, calculate_result(state), reason)
             if csv_bytes is not None:
                 replace_demand(db, schedule_id, proposed.demand, proposed.import_warnings)
             else:
                 update_setting(db, schedule_id, "threshold", proposed.threshold)
-            replace_assignments(db, schedule_id, draft.assignments)
+            replace_assignments(db, schedule_id, outcome.draft.assignments)
             _bump(db, schedule_id)
-            return calculate_result(load_state(db, schedule_id))
+            return replace(
+                calculate_result(load_state(db, schedule_id)),
+                generation_diagnostics=outcome.diagnostics,
+            )
 
     def list_snapshots(self, schedule_id: int):
         """List saved prior-state summaries for one schedule."""

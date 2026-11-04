@@ -5,6 +5,7 @@ from functools import partial
 from nicegui import ui
 
 from src.domain.periods import WEEKDAYS
+from src.model.scheduling import GenerationDiagnostics, ShiftDefinition
 from ui.analysis_panel import render_coverage_chart
 from ui.demand_panel import render_threshold
 from ui.presentation import finding_text, hour_range, person_label, ratio
@@ -87,6 +88,8 @@ def render_roster(page: PageSession) -> None:
                         else ""
                     )
                     ui.label(finding_text(warning)).classes(f"schedule-alert {tone}")
+        if result.generation_diagnostics is not None:
+            _generation_diagnostics(result.generation_diagnostics, state.shifts)
     if state.demand is None:
         if page.tab != "Demand import":
             ui.label("Import demand to see coverage")
@@ -351,6 +354,8 @@ def _replacement(page) -> None:
     )
     if preview.draft.weekly.coverage_rate is not None:
         ui.label(f"Proposed coverage: {ratio(preview.draft.weekly.coverage_rate * 100)}%")
+    if preview.draft.generation_diagnostics is not None:
+        _generation_diagnostics(preview.draft.generation_diagnostics, preview.draft.state.shifts)
     with ui.element("div").classes("max-h-44 overflow-auto"):
         for slot in preview.draft.roster:
             if slot.employees:
@@ -372,3 +377,44 @@ def _replacement(page) -> None:
 def _cancel(page) -> None:
     page.pending = None
     page.refresh()
+
+
+def _generation_diagnostics(
+    diagnostics: GenerationDiagnostics, shifts: tuple[ShiftDefinition, ...]
+) -> None:
+    """Render transient optimizer explanations beside the draft they describe."""
+    shifts_by_id = {shift.id: shift for shift in shifts}
+    with ui.card().classes("schedule-workspace-card"):
+        ui.label("Generation diagnostics").classes("schedule-workspace-card-title")
+        ui.label("Unavoidable shortage lower bound")
+        ui.label(diagnostics.lower_bound_message)
+        ui.label(
+            f"Optimizer cost: C={diagnostics.primary_cost}; "
+            f"fairness F={diagnostics.fairness_cost}; "
+            f"deviation {diagnostics.fairness_deviation_hours:.2f} h"
+        )
+        ui.label("Linear coverage metrics")
+        for shortfall in diagnostics.shortfalls:
+            location = WEEKDAYS[shortfall.day]
+            if shortfall.hour is not None:
+                location += f" {shortfall.hour:02d}:00"
+            elif shortfall.shift_id is not None:
+                shift = shifts_by_id[shortfall.shift_id]
+                location += f" {hour_range(shift.start_hour, shift.end_hour)}"
+            ui.label(
+                f"{shortfall.reason}: {location}, {shortfall.unmet_staff_hours} "
+                f"unmet staff-hours. {shortfall.message}"
+            )
+        flag_messages = dict(diagnostics.flag_messages)
+        for flag in diagnostics.flags:
+            message = flag_messages.get(flag)
+            ui.label(f"{flag}: {message}" if message else flag)
+        if diagnostics.trace:
+            with ui.expansion("Generation decision trace"):
+                for step in diagnostics.trace:
+                    ui.label(
+                        f"{step.sequence}. {step.action} employee {step.employee_id}, "
+                        f"{WEEKDAYS[step.day]} shift {step.shift_id}: "
+                        f"delta C {step.delta_cost}, delta F {step.delta_fairness}. "
+                        f"{step.explanation}"
+                    )

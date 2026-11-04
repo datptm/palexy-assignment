@@ -5,7 +5,6 @@ from itertools import product
 
 import pytest
 
-from src.domain.metrics import calculate_result
 from src.model.scheduling import Assignment, DemandCell, Employee, ScheduleState, ShiftDefinition
 from tests.scheduling_support import require_symbol
 
@@ -91,7 +90,7 @@ def test_zero_transactions_are_valid_one_person_demand_and_input_is_unchanged() 
     state = _state(day_count=2, employees=(1,), required={(0, 7): 0, (1, 7): 0})
     before = state
 
-    outcome = _run(state, _config(day_count=2))
+    outcome = _run(state, _config(day_count=2, open_end_hour=8))
 
     assert outcome.blocked_code is None
     assert state == before
@@ -110,7 +109,7 @@ def test_demand_uses_integer_ceiling_and_never_treats_zero_as_missing() -> None:
         threshold=20,
         required={(0, hour): count for hour, count in zip(range(7, 12), transactions, strict=True)},
     )
-    outcome = _run(state, _config(open_end_hour=12))
+    outcome = _run(state, _config(day_count=1, open_end_hour=12))
 
     assert outcome.diagnostics.required_hours == 9
     assert outcome.blocked_code is None
@@ -145,7 +144,7 @@ def test_incomplete_or_malformed_demand_is_rejected_before_search() -> None:
     SchedulingError = require_symbol("src.model.scheduling", "SchedulingError")
 
     with pytest.raises(SchedulingError) as failure:
-        _run(state, _config(day_count=2))
+        _run(state, _config(day_count=2, open_end_hour=8))
 
     assert failure.value.code == "INVALID_DEMAND"
 
@@ -206,8 +205,8 @@ def test_default_marginals_stop_at_zero_delta_but_custom_policy_can_add() -> Non
         required={(0, hour): count for hour, count in zip(range(7, 15), requirements, strict=True)},
     )
 
-    default = _run(state)
-    custom = _run(state, _config(w_under=4, w_empty=8))
+    default = _run(state, _config(day_count=1, open_end_hour=15))
+    custom = _run(state, _config(day_count=1, open_end_hour=15, w_under=4, w_empty=8))
 
     assert len(default.draft.assignments) == 3
     assert [step.delta_cost for step in default.diagnostics.trace] == [-48, -20, -8]
@@ -228,7 +227,7 @@ def test_empty_hour_is_preferred_over_a_second_person_on_a_busy_day() -> None:
             (day, hour): (2 if day == 0 else 1) for day, hour in product(range(2), range(7, 15))
         },
     )
-    outcome = _run(state, _config(day_count=2))
+    outcome = _run(state, _config(day_count=2, open_end_hour=15))
 
     assert [(item.day, item.shift_id) for item in outcome.draft.assignments] == [(0, 1), (1, 1)]
     assert len({item.day for item in outcome.draft.assignments}) == 2
@@ -252,7 +251,7 @@ def test_cost_density_ranks_four_hour_peak_before_eight_hour_shift() -> None:
             Assignment(4, 2, 1, 1),
         ),
     )
-    config = _config(day_count=2)
+    config = _config(day_count=2, open_end_hour=15)
 
     first = rank_add_candidates(state, config=config)[0]
     after_first = replace(
@@ -368,7 +367,7 @@ def test_can_auto_assign_uses_weekly_daily_overlap_and_reference_constraints() -
         end_hour=18,
         employees=(8,),
         shifts=((7, 15), (10, 18), (15, 18)),
-        daily_shift_limit=2,
+        daily_shift_limit=1,
         assignments=(Assignment(1, 1, 0, 1),),
     )
 
@@ -400,18 +399,20 @@ def test_refinement_replaces_overallocated_staff_without_changing_coverage() -> 
         assignments=initial,
     )
 
-    outcome = refine_roster(state, config=_config(day_count=6))
+    outcome = refine_roster(state, config=_config(day_count=6, open_end_hour=15))
 
     assert outcome.diagnostics.primary_cost == 0
-    assert outcome.diagnostics.fairness_cost == 1792
+    assert outcome.diagnostics.fairness_cost == 384
     assert outcome.diagnostics.trace[0].action == "REPLACE"
     assert outcome.diagnostics.trace[0].source_employee_id == 1
-    assert outcome.diagnostics.trace[0].employee_id == 3
+    assert outcome.diagnostics.trace[0].employee_id == 2
     assert outcome.diagnostics.trace[0].delta_cost == 0
     assert outcome.diagnostics.trace[0].delta_fairness == -1408
+    assert outcome.diagnostics.trace[1].action == "REPLACE"
+    assert outcome.diagnostics.trace[1].employee_id == 3
 
 
-def test_refinement_rejects_fairness_worsening_replacement_and_reports_caps() -> None:
+def test_refinement_rejects_fairness_worsening_replacement() -> None:
     refine_roster = require_symbol("src.domain.generation", "refine_roster")
     initial = tuple(
         [Assignment(day + 1, 1, day, 1) for day in range(3)]
@@ -428,19 +429,48 @@ def test_refinement_rejects_fairness_worsening_replacement_and_reports_caps() ->
         assignments=initial,
     )
 
-    outcome = refine_roster(state, config=_config(day_count=6))
+    outcome = refine_roster(state, config=_config(day_count=6, open_end_hour=15))
 
     assert all(
         step.delta_cost < 0 or (step.delta_cost == 0 and step.delta_fairness < 0)
         for step in outcome.diagnostics.trace
     )
     assert outcome.diagnostics.fairness_cost <= 384
-    capped = _run(
+
+
+def test_construction_reaches_add_closure_before_refinement_move_cap() -> None:
+    outcome = _run(
         _state(day_count=2, employees=(8, 8)),
-        _config(day_count=2, max_moves=1),
+        _config(day_count=2, open_end_hour=8, max_moves=1),
     )
-    assert capped.diagnostics.refinement_capped is True
-    assert "REFINEMENT_CAPPED" in capped.diagnostics.flags
+
+    assert {(item.day, item.shift_id) for item in outcome.draft.assignments} == {(0, 1), (1, 1)}
+    assert outcome.draft_result.weekly.unmet_staff_hours == 0
+    assert [step.phase for step in outcome.diagnostics.trace] == [
+        "CONSTRUCTION",
+        "CONSTRUCTION",
+    ]
+    assert outcome.diagnostics.refinement_capped is False
+
+
+def test_refinement_move_cap_counts_only_refinement_actions() -> None:
+    refine_roster = require_symbol("src.domain.generation", "refine_roster")
+    initial = tuple(Assignment(day + 1, 1, day, 1) for day in range(5)) + (Assignment(6, 2, 5, 1),)
+    state = _state(
+        day_count=6,
+        start_hour=7,
+        end_hour=15,
+        employees=(40, 32, 16),
+        shifts=((7, 15),),
+        required={(day, hour): 0 for day, hour in product(range(6), range(7, 15))},
+        assignments=initial,
+    )
+
+    outcome = refine_roster(state, config=_config(day_count=6, open_end_hour=15, max_moves=1))
+
+    assert [step.action for step in outcome.diagnostics.trace] == ["REPLACE"]
+    assert outcome.diagnostics.refinement_capped is True
+    assert "REFINEMENT_CAPPED" in outcome.diagnostics.flags
 
 
 @pytest.mark.parametrize(
@@ -491,7 +521,7 @@ def test_slot_shortfall_reasons_are_specific_and_lower_bound_is_conservative(
 
     assert matching
     assert all(item.kind == "slot" and item.unmet_staff_hours > 0 for item in matching)
-    assert diagnostics.unavoidable_unmet <= calculate_result(outcome.draft).weekly.unmet_staff_hours
+    assert diagnostics.unavoidable_unmet <= outcome.draft_result.weekly.unmet_staff_hours
     assert diagnostics.lower_bound_message
 
 
@@ -502,7 +532,7 @@ def test_uncovered_operating_hour_has_its_own_hour_level_shortfall() -> None:
         employees=(8,),
         shifts=((7, 15),),
     )
-    outcome = _run(state, _config(open_end_hour=16))
+    outcome = _run(state, _config(day_count=1, open_end_hour=16))
     records = [
         item
         for item in outcome.diagnostics.shortfalls
@@ -521,7 +551,7 @@ def test_employee_diagnostics_and_flags_handle_zero_denominators() -> None:
         start_hour=7,
         end_hour=15,
     )
-    outcome = _run(state, _config(day_count=2))
+    outcome = _run(state, _config(day_count=2, open_end_hour=15))
     employee_reports = {item.employee_id: item for item in outcome.diagnostics.employees}
 
     assert employee_reports[3].effective_capacity == 0
@@ -538,7 +568,7 @@ def test_utilization_flags_identify_low_and_near_zero_positive_capacity_staff() 
         start_hour=7,
         end_hour=15,
     )
-    outcome = _run(state)
+    outcome = _run(state, _config(day_count=1, open_end_hour=15))
 
     assert "LOW_UTILIZATION" in outcome.diagnostics.flags
     assert "NEAR_ZERO_WHILE_OTHERS_FULL" in outcome.diagnostics.flags
@@ -552,7 +582,7 @@ def test_shortage_free_result_has_empty_shortfall_report_and_zero_bound() -> Non
         start_hour=7,
         end_hour=8,
     )
-    outcome = _run(state)
+    outcome = _run(state, _config(day_count=1, open_end_hour=8))
 
     assert outcome.diagnostics.shortfalls == ()
     assert outcome.diagnostics.unavoidable_unmet == 0

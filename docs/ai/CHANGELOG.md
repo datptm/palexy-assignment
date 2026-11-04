@@ -72,3 +72,19 @@
 - Why: Lock down the approved specification/design/plan behavior before implementing algorithm v2.
 - Verification: Full pytest: 48 expected feature failures, 136 passed, 3 opt-in benchmarks skipped; no import, fixture, syntax, or collection errors. Ruff check, Ruff format check, compileall, and `git diff --check` passed. No implementation or performance benchmark run.
 - Risks / follow-ups: The domain function/record names and the diagnostic UI labels are proposed test contracts for review; the chosen deterministic resource-work budget remains an implementation-stage decision.
+
+## 2026-11-04 05:19 (UTC) - Implement scheduling algorithm v2
+- Task: `scheduling-algorithm-v2` Stage 5 implementation
+- Changes: Replaced the v1 generator with deterministic cost/fairness construction and ADD/DROP/MOVE/REPLACE refinement, bounded effective capacity, explicit work/trace budgets, shortfall diagnostics, and decision traces. Reused H1-H5 checks across automatic placement and state validation; integrated diagnostics with generation, previews, refresh confirmation, and the roster/staff/demand UI. Documented policy and resource bounds. Applied the previously approved test-fixture and canonical replacement expectation corrections.
+- Files: `README.md`, `src/domain/generation.py`, `src/domain/validation.py`, `src/model/scheduling.py`, `src/services/schedules.py`, `tests/test_generation_v2.py`, `ui/demand_panel.py`, `ui/roster.py`, `ui/staff_panel.py`, `docs/ai/CHANGELOG.md`
+- Why: Implement the approved `docs/ai/scheduling-algorithm-v2/01-spec.md`, `02-design.md`, and `03-plan.md` using the Stage 4 test contract.
+- Verification: `.venv/Scripts/python.exe -m pytest -q --tb=short`: 184 passed, 3 opt-in benchmarks skipped. `ruff check .`, `ruff format --check .`, `compileall -q src ui tests main.py`, and `git diff --check`: passed. Opt-in performance suite: 3 passed; import+metrics 0.0043s, pure generation at 100 employees/32 shifts 4.2307s, confirmed refresh 0.0153s. A manual oversized-candidate preflight probe rejected 112,000 candidate triples with `GENERATION_WORK_LIMIT`.
+- Risks / follow-ups: No browser visual walkthrough or non-Windows platform run was performed; UI behavior is covered by the automated tests.
+
+## 2026-11-04 05:38 (UTC) - Separate construction and refinement move caps
+- Task: Resolve the `scheduling-algorithm-v2` Stage 6 construction-cap gap.
+- Changes: Let construction reach negative-cost ADD closure regardless of `max_moves`; count only accepted refinement actions against that cap. Split the cap test into separate construction and refinement assertions, and record the follow-up in the Stage 6 summary.
+- Files: `src/domain/generation.py`, `tests/test_generation_v2.py`, `docs/ai/scheduling-algorithm-v2/06-summary.md`, `docs/ai/CHANGELOG.md`
+- Why: FR-4.2 requires construction closure before FR-5.3's refinement move limit; the old shared trace count could leave avoidable unmet demand.
+- Verification: Regression test failed before the fix with only one of two days assigned. Focused v2 tests: 46 passed. Full pytest outside the sandbox: 186 passed, 3 opt-in benchmarks skipped. Ruff lint, Ruff format, compileall, and `git diff --check` passed. Opt-in benchmarks were not rerun for this focused change.
+- Risks / follow-ups: The Stage 6 summary retains historical audit statuses for other items; no new full requirement audit or live browser walkthrough was performed.

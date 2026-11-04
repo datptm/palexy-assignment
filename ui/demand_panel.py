@@ -183,6 +183,29 @@ def render_refresh(page: PageSession) -> None:
         ).classes("schedule-alert schedule-alert--warning")
         if preview.draft.weekly.coverage_rate is not None:
             ui.label(f"Proposed coverage: {ratio(preview.draft.weekly.coverage_rate * 100)}%")
+        diagnostics = preview.draft.generation_diagnostics
+        if diagnostics is not None:
+            shifts_by_id = {shift.id: shift for shift in preview.draft.state.shifts}
+            ui.label("Generation diagnostics").classes("schedule-workspace-card-title")
+            ui.label("Unavoidable shortage lower bound")
+            ui.label(diagnostics.lower_bound_message)
+            ui.label(
+                f"Optimizer cost: C={diagnostics.primary_cost}; "
+                f"fairness F={diagnostics.fairness_cost}"
+            )
+            for shortfall in diagnostics.shortfalls:
+                location = WEEKDAYS[shortfall.day]
+                if shortfall.hour is not None:
+                    location += f" {shortfall.hour:02d}:00"
+                elif shortfall.shift_id is not None:
+                    shift = shifts_by_id[shortfall.shift_id]
+                    location += f" {hour_range(shift.start_hour, shift.end_hour)}"
+                ui.label(
+                    f"{shortfall.reason}: {location}, "
+                    f"{shortfall.unmet_staff_hours} unmet staff-hours"
+                )
+            for flag in diagnostics.flags:
+                ui.label(flag)
         with ui.element("div").classes("max-h-44 overflow-auto"):
             for slot in preview.draft.roster:
                 if slot.employees:

@@ -12,6 +12,11 @@ from ui.session import PageSession
 def render_staff(page: PageSession) -> None:
     """Render employee forms and deliberate version-bound removal."""
     state = page.result.state
+    generation_employees = (
+        {}
+        if page.result.generation_diagnostics is None
+        else {item.employee_id: item for item in page.result.generation_diagnostics.employees}
+    )
     editing = page.editor if page.editor and page.editor[0] == "staff_edit" else None
     employee = next((item for item in state.employees if editing and item.id == editing[1]), None)
     with ui.column().classes("schedule-workspace-intro"):
@@ -83,6 +88,14 @@ def render_staff(page: PageSession) -> None:
                             f"{metric.assigned_hours} / {metric.maximum_hours} h · "
                             f"{'N/A' if utilization is None else f'{utilization * 100:.0f}%'}"
                         ).classes("schedule-capacity-meta")
+                        generation_metric = generation_employees.get(metric.employee_id)
+                        if generation_metric is not None:
+                            ui.label(
+                                f"Effective capacity: {generation_metric.effective_capacity} h"
+                            ).classes("schedule-capacity-meta")
+                            ui.label(
+                                f"Target hours: {generation_metric.target_hours:.1f} h"
+                            ).classes("schedule-capacity-meta")
                         with ui.element("div").classes("schedule-capacity-track"):
                             ui.element("div").classes(fill_class).style(f"width: {percentage:.0f}%")
                         overage = max(0, metric.assigned_hours - metric.maximum_hours)

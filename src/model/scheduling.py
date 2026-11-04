@@ -1,5 +1,7 @@
 """Value records shared by scheduling layers."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -158,6 +160,111 @@ class ScheduleResult:
     weekly: WeeklyMetric
     employees: tuple[EmployeeMetric, ...]
     roster: tuple[RosterSlot, ...] = ()
+    generation_diagnostics: GenerationDiagnostics | None = field(default=None, compare=False)
+
+
+@dataclass(frozen=True)
+class GenerationConfig:
+    """Deterministic policy and operating bounds for automatic generation."""
+
+    day_count: int = 7
+    open_start_hour: int = 7
+    open_end_hour: int = 23
+    w_under: int = 3
+    w_over: int = 1
+    w_empty: int = 6
+    max_passes: int = 50
+    max_moves: int = 5000
+    rest_weight: int = 0
+
+
+@dataclass(frozen=True)
+class GenerationEmployeeDiagnostic:
+    """Capacity and proportional workload information for one employee."""
+
+    employee_id: int
+    assigned_hours: int
+    maximum_hours: int
+    effective_capacity: int
+    raw_utilization: float | str
+    effective_utilization: float | str
+    target_hours: float
+    deviation_hours: float
+
+
+@dataclass(frozen=True)
+class GenerationShortfall:
+    """One configured shift-slot or uncovered-hour shortage explanation."""
+
+    kind: str
+    reason: str
+    unmet_staff_hours: int
+    message: str
+    day: int
+    hour: int | None = None
+    shift_id: int | None = None
+
+
+@dataclass(frozen=True)
+class GenerationTrace:
+    """One accepted deterministic roster decision."""
+
+    sequence: int
+    phase: str
+    action: str
+    employee_id: int
+    day: int
+    shift_id: int
+    delta_cost: int
+    delta_fairness: int
+    explanation: str
+    source_employee_id: int | None = None
+    source_day: int | None = None
+    source_shift_id: int | None = None
+
+
+@dataclass(frozen=True)
+class GenerationDiagnostics:
+    """Transient optimizer costs, capacity bounds, and decision explanations."""
+
+    primary_cost: int
+    fairness_cost: int
+    fairness_deviation_hours: float
+    required_hours: int
+    capacity_hours: int
+    unavoidable_unmet: int
+    lower_bound_message: str
+    employees: tuple[GenerationEmployeeDiagnostic, ...]
+    shortfalls: tuple[GenerationShortfall, ...]
+    flags: tuple[str, ...]
+    flag_messages: tuple[tuple[str, str], ...]
+    trace: tuple[GenerationTrace, ...]
+    rest_violations: int
+    refinement_capped: bool
+
+
+@dataclass(frozen=True)
+class GenerationOutcome:
+    """Pure generation result, or a prerequisite block without partial output."""
+
+    blocked_code: str | None
+    message: str
+    draft: ScheduleState | None
+    diagnostics: GenerationDiagnostics | None
+    draft_result: ScheduleResult | None
+
+
+@dataclass(frozen=True)
+class AddCandidate:
+    """Feasible negative-cost addition in deterministic rank order."""
+
+    employee_id: int
+    day: int
+    shift_id: int
+    delta_cost: int
+    delta_fairness: int
+    excess_added: int
+    duration: int
 
 
 @dataclass(frozen=True)
