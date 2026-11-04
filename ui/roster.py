@@ -5,6 +5,7 @@ from functools import partial
 from nicegui import ui
 
 from src.domain.periods import WEEKDAYS
+from ui.analysis_panel import render_coverage_chart
 from ui.demand_panel import render_threshold
 from ui.presentation import finding_text, hour_range, person_label, ratio
 from ui.session import PageSession
@@ -14,75 +15,180 @@ def render_roster(page: PageSession) -> None:
     """Show the selected committed week and its editable shift cells."""
     result = page.result
     state = result.state
-    ui.label(f"Threshold: {state.threshold} · Daily shift limit: {state.daily_shift_limit}")
-    render_threshold(page)
-    with ui.row().classes("w-full min-w-0 items-center gap-4 flex-wrap"):
-        ui.label("Imported demand" if state.demand is not None else "Demand unavailable")
-        ui.label("Draft roster" if state.assignments else "Empty roster")
-        ui.label(f"{len(result.warnings)} current warnings")
-        ui.label(f"{result.weekly.scheduled_staff_hours} scheduled staff-hours")
-        if state.demand is not None:
-            ui.label(f"{result.weekly.unmet_staff_hours} unmet staff-hours")
-            ui.label(f"{ratio(result.weekly.coverage_rate * 100)}% coverage").classes(
-                "w-full sm:w-auto"
+    with ui.card().classes("schedule-card gap-4"):
+        with ui.row().classes("schedule-header-row justify-between"):
+            ui.label("Monday–Sunday weekly roster").classes("schedule-card-title")
+
+            async def generate() -> None:
+                if not state.assignments:
+                    await page.act(page.service.generate, state.id)
+                    return
+                preview = await page.act(page.service.preview_generation, state.id)
+                if preview is not None:
+                    page.pending = {"kind": "generation", "preview": preview}
+                    page.refresh()
+
+            ui.button("Auto-schedule", on_click=generate).props("unelevated")
+        with ui.row().classes("schedule-header-row"):
+            ui.label(f"Threshold: {state.threshold}").classes("schedule-status")
+            ui.label(f"Daily shift limit: {state.daily_shift_limit}").classes("schedule-status")
+            ui.label("Draft roster" if state.assignments else "Empty roster").classes(
+                "schedule-status"
             )
-    for warning in result.warnings:
-        ui.label(finding_text(warning))
+            ui.label(
+                "Imported demand" if state.demand is not None else "Demand unavailable"
+            ).classes("schedule-status")
+        render_threshold(page)
+        with ui.element("div").classes("schedule-kpis"):
+            coverage = (
+                f"{ratio(result.weekly.coverage_rate * 100)}%"
+                if result.weekly.coverage_rate is not None
+                else "Unavailable"
+            )
+            coverage_detail = (
+                "of required staff-hours"
+                if state.demand is not None
+                else "Coverage appears after CSV import"
+            )
+            _metric_card(
+                "Coverage",
+                coverage,
+                coverage_detail,
+                "healthy" if result.weekly.coverage_rate == 1 else "warning",
+            )
+            _metric_card(
+                "Uncovered hours",
+                (str(result.weekly.unmet_staff_hours) if state.demand is not None else "—"),
+                f"{result.weekly.unmet_staff_hours} unmet staff-hours across the week"
+                if state.demand is not None
+                else "Hours unavailable until demand is imported",
+                "critical" if result.weekly.unmet_staff_hours else "",
+            )
+            _metric_card(
+                "Scheduled hours",
+                str(result.weekly.scheduled_staff_hours),
+                "staff-hours assigned",
+            )
+            _metric_card(
+                "Warnings",
+                str(len(result.warnings)),
+                "current schedule findings",
+                "warning" if result.warnings else "healthy",
+            )
+        if result.warnings:
+            with ui.column().classes("gap-1 w-full"):
+                ui.label("Warnings to review").classes("schedule-card-title")
+                for warning in result.warnings:
+                    tone = (
+                        "schedule-alert--error"
+                        if warning.severity == "error"
+                        else "schedule-alert--warning"
+                        if warning.severity == "warning"
+                        else ""
+                    )
+                    ui.label(finding_text(warning)).classes(f"schedule-alert {tone}")
     if state.demand is None:
         if page.tab != "Demand import":
             ui.label("Import demand to see coverage")
 
-    async def generate() -> None:
-        if not state.assignments:
-            await page.act(page.service.generate, state.id)
-            return
-        preview = await page.act(page.service.preview_generation, state.id)
-        if preview is not None:
-            page.pending = {"kind": "generation", "preview": preview}
-            page.refresh()
-
-    ui.button("Auto-schedule", on_click=generate)
-    if page.pending and page.pending["kind"] == "generation":
-        _replacement(page)
     if not state.shifts:
-        ui.label("No shifts configured. Add a shift before generating.")
+        ui.label("No shifts configured. Add a shift before generating.").classes("schedule-alert")
     with ui.element("div").classes("w-full max-w-full min-w-0 overflow-x-auto"):
-        with ui.row().classes("min-w-max gap-4"):
-            for day, name in enumerate(WEEKDAYS):
-                with ui.column().classes("min-w-40").props(f"id=roster-day-{day}"):
-                    ui.label(name).classes("font-bold")
-                    for shift in sorted(
-                        state.shifts,
-                        key=lambda item: (item.start_hour, item.end_hour, item.id),
-                    ):
+        with ui.element("div").classes("schedule-grid-scroll"):
+            with ui.element("div").classes("schedule-grid"):
+                ui.label("Shift").classes("schedule-grid-heading")
+                for day, name in enumerate(WEEKDAYS):
+                    with ui.column().classes("schedule-grid-heading").props(f"id=roster-day-{day}"):
+                        ui.label(name)
+                shifts = sorted(
+                    state.shifts,
+                    key=lambda item: (item.start_hour, item.end_hour, item.id),
+                )
+                for shift in shifts:
+                    with ui.column().classes("schedule-grid-shift"):
+                        ui.label(hour_range(shift.start_hour, shift.end_hour))
+                    for day, name in enumerate(WEEKDAYS):
                         slot = next(
                             item
                             for item in result.roster
                             if item.day == day and item.shift_id == shift.id
                         )
-                        ui.button(
-                            f"{name} {hour_range(shift.start_hour, shift.end_hour)}",
-                            on_click=partial(_open_cell, page, day, shift.id),
-                        ).props(f"id=roster-cell-{day}-{shift.id}")
-                        if slot.employees:
-                            for person in slot.employees:
-                                ui.label(person_label(person.name, person.employee_id))
-                                ui.label(f"{person.assigned_hours} / {person.maximum_hours} h")
-                            for assignment in state.assignments:
-                                if assignment.day == day and assignment.shift_id == shift.id:
-                                    ui.button(
-                                        "Remove assignment",
-                                        on_click=partial(
-                                            page.act,
-                                            page.service.remove_assignment,
-                                            state.id,
-                                            assignment.id,
-                                        ),
+                        with ui.column().classes("schedule-grid-cell"):
+                            ui.button(
+                                f"{name} {hour_range(shift.start_hour, shift.end_hour)}",
+                                on_click=partial(_open_cell, page, day, shift.id),
+                            ).props(f"id=roster-cell-{day}-{shift.id}").props("flat")
+                            if slot.employees:
+                                for person in slot.employees:
+                                    assignment = next(
+                                        item
+                                        for item in state.assignments
+                                        if item.day == day
+                                        and item.shift_id == shift.id
+                                        and item.employee_id == person.employee_id
                                     )
-                        else:
-                            ui.label("Unassigned")
+                                    with ui.row().classes("schedule-assignee-row"):
+                                        ui.label(
+                                            person_label(person.name, person.employee_id)
+                                        ).classes("schedule-assignee")
+                                        remove_button = ui.button(
+                                            icon="close",
+                                            on_click=partial(
+                                                page.act,
+                                                page.service.remove_assignment,
+                                                state.id,
+                                                assignment.id,
+                                            ),
+                                        ).props(
+                                            f"id=remove-assignment-{assignment.id} flat round dense"
+                                        )
+                                        remove_button.props["aria-label"] = (
+                                            f"Remove assignment for {person.name}"
+                                        )
+                                        remove_button.classes("schedule-assignee-remove")
+                                        remove_button.tooltip(
+                                            f"Remove assignment for {person.name}"
+                                        ).mark(f"remove-assignment-{assignment.id}")
+                                    ui.label(
+                                        f"{person.assigned_hours} / {person.maximum_hours} h"
+                                    ).classes("schedule-capacity-meta")
+                            else:
+                                ui.label("Unassigned").classes("schedule-empty")
     if page.editor and page.editor[0] == "cell":
-        _assignment_editor(page)
+        editor = ui.dialog().props("persistent")
+        with editor, ui.card().classes("schedule-card schedule-workspace-dialog gap-2"):
+            with ui.row().classes("schedule-header-row justify-between"):
+                ui.label("Edit assignment").classes("schedule-card-title")
+                ui.button(
+                    "Close",
+                    icon="close",
+                    on_click=lambda: _close_editor(page),
+                ).props("flat")
+            _assignment_editor(page)
+        editor.open()
+    elif page.pending and page.pending["kind"] == "generation":
+        confirmation = ui.dialog().props("persistent")
+        with confirmation, ui.card().classes("schedule-card schedule-workspace-dialog gap-2"):
+            ui.label("Review regenerated roster").classes("schedule-card-title")
+            _replacement(page)
+        confirmation.open()
+    with ui.card().classes("schedule-card gap-3 w-full"):
+        render_coverage_chart(page)
+
+
+def _metric_card(title: str, value: str, detail: str, tone: str = "") -> None:
+    """Render one compact summary metric with a semantic status tone."""
+    tone_class = f" schedule-metric--{tone}" if tone else ""
+    with ui.column().classes(f"schedule-metric{tone_class} gap-0"):
+        ui.label(title).classes("schedule-metric-label")
+        ui.label(value).classes("schedule-metric-value")
+        ui.label(detail).classes("schedule-metric-detail")
+
+
+def _close_editor(page: PageSession) -> None:
+    """Close the current assignment dialog without changing the schedule."""
+    page.editor = None
+    page.refresh()
 
 
 def _open_cell(page, day: int, shift_id: int) -> None:

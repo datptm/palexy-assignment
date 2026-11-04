@@ -153,12 +153,18 @@ async def test_assignment_add_or_remove_updates_hours_without_reload(tmp_path, m
 
     async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, service):
         user.find("Monday 07:00–15:00").click()
+        assert len(user.find(ui.dialog).elements) == 1
         user.find("Alex").click()
         user.find("Add assignment").click()
         await user.should_see("8 / 8 h")
+        assignment_id = service.get_schedule(ids[0]).state.assignments[0].id
         assert len(service.get_schedule(ids[0]).state.assignments) == 1
 
-        user.find("Remove assignment").click()
+        remove_button = user.find(f"remove-assignment-{assignment_id}")
+        button = next(iter(remove_button.elements))
+        assert button.props.get("icon") == "close"
+        assert button.props.get("aria-label") == "Remove assignment for Alex"
+        remove_button.click()
         await user.should_see("Unassigned")
         await user.should_not_see("Alex #1")
         assert service.get_schedule(ids[0]).state.assignments == ()
@@ -387,6 +393,7 @@ async def test_generation_partial_draft_is_success_and_regeneration_cancel_is_in
 
         user.find("Auto-schedule").click()
         await user.should_see("replaces all assignments")
+        assert len(user.find(ui.dialog).elements) == 1
         user.find("Cancel").click()
         assert service.get_schedule(ids[0]) == before
         assert service.list_snapshots(ids[0]) == []
@@ -410,8 +417,8 @@ async def test_history_is_read_only_and_return_reloads_active_result(tmp_path, m
         user.find("THRESHOLD_CHANGE").click()
         await user.should_see("Historical / read-only")
         await user.should_see("Threshold: 20")
+        assert len(user.find(ui.dialog).elements) == 1
         await user.should_not_see("Restore snapshot")
-        await user.should_not_see("Auto-schedule")
         await user.should_not_see("Add employee")
 
         user.find("Return to active").click()

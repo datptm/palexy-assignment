@@ -1,6 +1,7 @@
 """Rendered roster, demand, coverage, and warning contracts."""
 
 import pytest
+from nicegui import ui
 
 from src.model.scheduling import SchedulingError
 from tests.scheduling_support import week_csv
@@ -31,6 +32,78 @@ async def test_roster_shows_seven_editable_days_and_unassigned_shift_cells(
         await user.should_see("07:00–15:00")
         await user.should_see("15:00–23:00")
         await user.should_see("Demand unavailable")
+
+
+@sync_test
+async def test_dashboard_prioritizes_roster_and_compares_required_with_scheduled_staff(
+    tmp_path, monkeypatch
+) -> None:
+    """The main workspace shows essential metrics and an explicit coverage legend."""
+
+    def seed(service):
+        schedule_id = service.create_schedule("Week").id
+        service.import_initial(schedule_id, week_csv())
+        service.add_employee(schedule_id, "Alex", 40)
+
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, _):
+        await user.should_see("Weekly staff roster")
+        await user.should_see("Monday–Sunday weekly roster")
+        await user.should_see("Coverage")
+        await user.should_see("Uncovered hours")
+        await user.should_see("Scheduled hours")
+        await user.should_see("Warnings")
+        await user.should_see("Demand & coverage chart")
+        await user.should_see("Required staff · navy step line")
+        await user.should_see("Scheduled staff · teal bars; red marks a shortage")
+        await user.should_see("112 hourly slots have uncovered demand")
+        assert len(user.find(ui.echart).elements) == 1
+
+
+@sync_test
+async def test_staff_workspace_opens_in_dialog_instead_of_below_chart(
+    tmp_path, monkeypatch
+) -> None:
+    """Workspace controls stay off the dashboard until opened from navigation."""
+
+    def seed(service):
+        service.create_schedule("Week")
+
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, _):
+        await user.should_see("Demand & coverage chart")
+        await user.should_not_see("Add employee")
+        await user.should_not_see("Employee list & capacity")
+
+        user.find("Staff").click()
+
+        await user.should_see("Add employee")
+        await user.should_see("Employee list & capacity")
+        assert len(user.find(ui.dialog).elements) == 1
+        with user.scope(ui.dialog):
+            await user.should_not_see("Shifts")
+        user.find("Close").click()
+        await user.should_not_see("Add employee")
+
+
+@sync_test
+async def test_workspace_dialogs_follow_reference_screen_sections(tmp_path, monkeypatch) -> None:
+    """Each workspace opens in the shared dialog shell with its designed heading."""
+
+    def seed(service):
+        service.create_schedule("Week")
+
+    workspaces = (
+        ("Staff", "Staff Management"),
+        ("Shifts", "Shift Configurations"),
+        ("Demand import", "Import Demand"),
+        ("Hourly analysis", "Hourly Analysis & Gap Dashboard"),
+        ("Warnings", "Warnings & Inconsistencies"),
+        ("History", "Schedule History"),
+    )
+    async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, _):
+        for tab, heading in workspaces:
+            user.find(tab).click()
+            await user.should_see(heading)
+            assert len(user.find(ui.dialog).elements) == 1
 
 
 @sync_test
@@ -104,6 +177,9 @@ async def test_analysis_or_warning_shows_numeric_gap_and_overage(tmp_path, monke
         await user.should_see("OVER_WEEKLY_MAX")
         user.find("Locate warning").click()
         await user.should_see("Showing A")
+        user.find("Warnings").click()
+        await user.should_see("Warnings & Inconsistencies")
+        await user.should_see("Review and Adjust")
 
 
 @sync_test
