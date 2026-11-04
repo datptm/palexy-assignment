@@ -64,3 +64,11 @@
 - Why: Match the supplied workspace-screen design while preserving the existing scheduling workflows and read-only history contract.
 - Verification: `.venv/Scripts/python.exe -m pytest -q --tb=short`: 132 passed, 3 opt-in benchmarks skipped. `ruff check .`, `ruff format --check .`, `compileall -q src ui tests main.py`, and `git diff --check`: passed. Desktop browser layouts for all six workspaces were visually inspected; focused UI tests confirm the duplicate dialog navigation is absent.
 - Risks / follow-ups: Narrow viewport layout was not manually inspected; responsive single-column rules are in place.
+
+## 2026-11-04 04:35 (UTC) - Add scheduling algorithm v2 red tests
+- Task: `scheduling-algorithm-v2` Stage 4 tests first
+- Changes: Added a spec-traceable matrix and pure algorithm, service lifecycle, and NiceGUI tests for the approved Tiers A/B. Existing fixtures and production code were not changed.
+- Files: `docs/ai/scheduling-algorithm-v2/04-tests.md`, `tests/test_generation_v2.py`, `tests/test_scheduling_algorithm_v2_service.py`, `tests/test_scheduling_algorithm_v2_ui.py`, `docs/ai/CHANGELOG.md`
+- Why: Lock down the approved specification/design/plan behavior before implementing algorithm v2.
+- Verification: Full pytest: 48 expected feature failures, 136 passed, 3 opt-in benchmarks skipped; no import, fixture, syntax, or collection errors. Ruff check, Ruff format check, compileall, and `git diff --check` passed. No implementation or performance benchmark run.
+- Risks / follow-ups: The domain function/record names and the diagnostic UI labels are proposed test contracts for review; the chosen deterministic resource-work budget remains an implementation-stage decision.
