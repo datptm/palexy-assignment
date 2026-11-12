@@ -97,3 +97,13 @@
 - Why: Keep the roster readable, prevent workspace refreshes from recreating an open dialog, and make assignment decisions and detailed reviews easier to scan.
 - Verification: `.venv/Scripts/python.exe -m pytest -q --tb=short`: 191 passed, 3 opt-in benchmarks skipped. `.venv/Scripts/python.exe -m ruff check .`, `.venv/Scripts/python.exe -m ruff format --check .`, `.venv/Scripts/python.exe -m compileall -q src ui tests main.py`, and `git diff --check`: passed. Focused dialog and assignment editor tests failed before their respective fixes and passed afterward.
 - Risks / follow-ups: No live browser visual walkthrough was performed; the automated NiceGUI interaction tests cover dialog state and content.
+
+## 2026-11-12 14:46 (UTC) - Collapse generation diagnostics
+
+- Task: Make auto-schedule diagnostics and shortfalls collapsible and distinguish warning and error colors.
+- Status: partial; the UI change is implemented, but the required full test suite has unrelated asynchronous workflow failures.
+- Changes: Wrapped generated diagnostics, shortfalls, flags, and decision trace in a closed-by-default expansion; kept the Shortfalls title as a plain heading and verified generation errors use the existing red alert. Updated UI tests and README guidance.
+- Files: `ui/roster.py`, `tests/test_scheduling_algorithm_v2_ui.py`, `tests/test_ui_workflows.py`, `README.md`, `docs/ai/CHANGELOG.md`
+- Why: Let managers scan the roster without the lengthy generation report while keeping severity clear when they inspect it.
+- Verification: Focused UI tests: 3 passed. Ruff lint, Ruff format check, compileall, and git diff --check: passed. Full pytest: 186 passed, 3 skipped, 5 failed in existing asynchronous UI workflow tests while the page showed Working; four of five failures reproduced in isolation.
+- Risks / follow-ups: Full suite remains red; stabilize the affected asynchronous UI tests or service completion timing, then rerun pytest. No live browser visual walkthrough was performed.

@@ -1,14 +1,16 @@
 """Transient algorithm diagnostics in the manager-facing generation summary."""
 
+from nicegui import ui
+
 from tests.scheduling_support import week_csv
-from tests.ui_support import input_field, manager_page, sync_test
+from tests.ui_support import manager_page, sync_test
 
 
 @sync_test
-async def test_generation_summary_explains_shortfalls_and_clears_transient_diagnostics(
+async def test_generation_summary_collapses_shortfalls_under_a_plain_heading(
     tmp_path, monkeypatch
 ) -> None:
-    """The displayed rationale belongs only to the current generated result."""
+    """Managers can fold generated rationale under a plain shortfalls heading."""
 
     def seed(service):
         schedule_id = service.create_schedule("Week").id
@@ -20,21 +22,28 @@ async def test_generation_summary_explains_shortfalls_and_clears_transient_diagn
     async with manager_page(tmp_path, monkeypatch, seed=seed) as (user, _):
         user.find("Auto-schedule").click()
 
-        await user.should_see("Generation diagnostics")
-        await user.should_see("Unavoidable shortage lower bound")
-        await user.should_see("Optimizer cost")
-        await user.should_see("NO_SHIFT_COVERAGE")
-
-        user.find("Staff").click()
-        await user.should_see("Effective capacity")
-        await user.should_see("Target hours")
-        input_field(user, "Employee name").type("Taylor")
-        input_field(user, "Weekly maximum").type("8")
-        user.find("Add employee").click()
-
-        await user.should_not_see("Generation diagnostics")
-        await user.open("/")
-        await user.should_not_see("Generation diagnostics")
+        await user.should_see("Generation diagnostics", retries=50)
+        expansion = next(
+            element
+            for element in user.find(ui.expansion).elements
+            if element.text == "Generation diagnostics"
+        )
+        assert expansion.value is False
+        expansion.open()
+        assert expansion.value is True
+        with user.scope("Generation diagnostics"):
+            await user.should_see("Unavoidable shortage lower bound")
+            await user.should_see("Optimizer cost")
+            await user.should_see("NO_SHIFT_COVERAGE")
+            shortfalls = next(
+                element
+                for element in user.find("Shortfalls").elements
+                if isinstance(element, ui.label)
+            )
+            assert "schedule-workspace-card-title" in shortfalls._classes
+            assert "schedule-alert--warning" not in shortfalls._classes
+        expansion.close()
+        assert expansion.value is False
 
 
 @sync_test
@@ -50,5 +59,12 @@ async def test_generation_explanation_keeps_linear_metrics_distinct_from_optimiz
         user.find("Auto-schedule").click()
 
         await user.should_see("Coverage")
+        await user.should_see("Generation diagnostics", retries=50)
+        expansion = next(
+            element
+            for element in user.find(ui.expansion).elements
+            if element.text == "Generation diagnostics"
+        )
+        expansion.open()
         await user.should_see("Optimizer cost")
         await user.should_see("Linear coverage metrics")

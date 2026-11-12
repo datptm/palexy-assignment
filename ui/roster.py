@@ -503,8 +503,7 @@ def _generation_diagnostics(
 ) -> None:
     """Render transient optimizer explanations beside the draft they describe."""
     shifts_by_id = {shift.id: shift for shift in shifts}
-    with ui.card().classes("schedule-workspace-card"):
-        ui.label("Generation diagnostics").classes("schedule-workspace-card-title")
+    with ui.expansion("Generation diagnostics").classes("schedule-workspace-card w-full"):
         render_data_table(
             ("Measure", "Value"),
             (

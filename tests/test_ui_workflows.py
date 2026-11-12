@@ -340,6 +340,12 @@ async def test_generation_missing_demand_shows_specific_prerequisite(tmp_path, m
         user.find("Auto-schedule").click()
 
         await user.should_see("MISSING_DEMAND")
+        error_alerts = [
+            element
+            for element in user.find("MISSING_DEMAND").elements
+            if isinstance(element, ui.label) and "schedule-alert--error" in element._classes
+        ]
+        assert error_alerts
         assert service.get_schedule(ids[0]) == before
 
 
